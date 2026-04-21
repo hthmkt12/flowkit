@@ -98,6 +98,35 @@ curl -s http://127.0.0.1:8100/api/flow/status
 - Extension stops showing `No token`.
 - Flow status and authenticated requests start working again.
 
+## Issue: Same-VM lane-02 shows Extension not connected
+
+### Symptoms
+- `http://127.0.0.1:8110/health` returns `extension_connected=false`.
+- `http://127.0.0.1:18182/ready` returns `503`.
+- Control job `CREATE_PROJECT` on `lane-02` fails with `Extension not connected`.
+
+### Root Cause
+- The second Chrome profile is not actually connected to the lane-02 agent and WS endpoints.
+
+### Common Triggers
+- Chrome launched without really loading the lane-02 unpacked extension.
+- The lane-02 extension still points to lane-01 endpoints.
+- The second Chrome profile is not signed into Google Flow yet.
+- The lane-02 SSH tunnel (`8110` / `9232`) is missing or broken.
+
+### Solutions
+- Render a lane-specific unpacked extension bundle for `lane-02`.
+- Verify the bundle manifest points to `http://127.0.0.1:8110` and `ws://127.0.0.1:9232`.
+- Start the lane-02 SSH tunnel.
+- Open the dedicated lane-02 Chrome profile.
+- Confirm the unpacked extension is really loaded in `chrome://extensions`.
+- Sign in with the second Google account and open `https://labs.google/fx/tools/flow`.
+
+### Verification
+- `curl -s http://127.0.0.1:8110/health` reports `extension_connected=true`.
+- `curl -s http://127.0.0.1:18182/ready` returns `200`.
+- A lane-02 smoke run passes `CREATE_PROJECT` instead of failing immediately.
+
 ## Issue: CAPTCHA_FAILED NO_FLOW_TAB
 
 ### Symptoms
