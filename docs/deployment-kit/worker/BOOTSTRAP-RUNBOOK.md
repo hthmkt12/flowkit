@@ -205,6 +205,42 @@ This wrapper manages both:
 - control API pid
 - scheduler pid
 
+## Same-VM two-lane remote wrapper
+
+When the VM already has:
+
+- control demo root
+- `lane-01` host-process worker root
+- `lane-02` host-process worker root
+
+you can coordinate the remote side with one wrapper:
+
+```bash
+cd ../control
+chmod +x scripts/two-lane-lab-service.sh
+./scripts/two-lane-lab-service.sh status
+./scripts/two-lane-lab-service.sh start
+./scripts/two-lane-lab-service.sh park
+```
+
+Default remote targets:
+
+- control:
+  - `control/scripts/control-service.sh`
+- lane-01:
+  - `/home/hth2/flowkit-worker-demo/scripts/lane-service.sh`
+- lane-02:
+  - `/home/hth2/flowkit-worker-demo-lane-02/scripts/lane-service.sh`
+
+This wrapper only manages the VM side:
+
+- control API
+- scheduler
+- lane-01 runner
+- lane-02 runner
+
+Local Windows tunnels and Chrome profiles still stay separate on purpose.
+
 If object storage is not configured yet, you can allow local-only artifact registration for demo runs:
 
 ```bash
