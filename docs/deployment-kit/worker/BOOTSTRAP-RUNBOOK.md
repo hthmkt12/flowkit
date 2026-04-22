@@ -205,6 +205,27 @@ This wrapper manages both:
 - control API pid
 - scheduler pid
 
+If the VM is using the known same-VM host-demo layout on `hth2-box`, the
+deployment kit now includes a profile file:
+
+- `docs/deployment-kit/control/host-demo.env`
+
+That profile avoids long manual overrides and points the control wrapper at:
+
+- published API `18080`
+- control pid/log files under `/home/hth2/flowkit-control-demo/control`
+- the top-level VM start scripts that already encapsulate the real Postgres and
+  Redis connection settings
+
+Example:
+
+```bash
+cd ../control
+CONTROL_PROFILE_FILE=./host-demo.env ./scripts/control-service.sh status
+CONTROL_PROFILE_FILE=./host-demo.env ./scripts/control-service.sh start
+CONTROL_PROFILE_FILE=./host-demo.env ./scripts/control-service.sh stop
+```
+
 ## Same-VM two-lane remote wrapper
 
 When the VM already has:
@@ -238,6 +259,11 @@ This wrapper only manages the VM side:
 - scheduler
 - lane-01 runner
 - lane-02 runner
+
+It automatically passes the default host-demo profile file to the control
+wrapper:
+
+- `docs/deployment-kit/control/host-demo.env`
 
 ## Same-VM two-lane local Windows wrappers
 
