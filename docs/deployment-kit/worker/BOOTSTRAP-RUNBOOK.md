@@ -120,6 +120,14 @@ Notes:
 - set those values in `env/lane.env` if the host user is not `1000:1000`
 - both containers run as that host UID:GID to avoid root-owned files under `runtime/output/`
 - Chrome still stays host-managed
+- if using object storage, set in `env/lane.env`:
+  - `R2_BUCKET`
+  - `R2_ACCESS_KEY_ID`
+  - `R2_SECRET_ACCESS_KEY`
+  - optional `R2_ENDPOINT`
+  - optional `R2_PUBLIC_BASE`
+- when `R2_PUBLIC_BASE` is set, uploaded artifacts are stored in control DB as
+  public HTTP URLs instead of `s3://...`
 
 ## Host-process lane-runner mode
 

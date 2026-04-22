@@ -24,6 +24,7 @@ class Settings:
     r2_bucket: str = os.environ.get("R2_BUCKET", "flowkit-output")
     r2_prefix: str = os.environ.get("R2_PREFIX", "projects")
     r2_endpoint: str = os.environ.get("R2_ENDPOINT", "")
+    r2_public_base: str = os.environ.get("R2_PUBLIC_BASE", "")
     r2_access_key_id: str = os.environ.get("R2_ACCESS_KEY_ID", "")
     r2_secret_access_key: str = os.environ.get("R2_SECRET_ACCESS_KEY", "")
     allow_local_artifact_fallback: bool = os.environ.get("ALLOW_LOCAL_ARTIFACT_FALLBACK", "0") == "1"
