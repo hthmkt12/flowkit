@@ -239,7 +239,39 @@ This wrapper only manages the VM side:
 - lane-01 runner
 - lane-02 runner
 
-Local Windows tunnels and Chrome profiles still stay separate on purpose.
+## Same-VM two-lane local Windows wrappers
+
+The local side now has matching wrappers for:
+
+- SSH tunnels
+- Chrome profiles
+- one aggregate local lab entrypoint
+
+Scripts:
+
+- `control/scripts/local-tunnel-service.ps1`
+- `control/scripts/local-chrome-service.ps1`
+- `control/scripts/two-lane-local-lab.ps1`
+
+Aggregate usage:
+
+```powershell
+cd F:\vm201 Coolify\flowkit\docs\deployment-kit\control\scripts
+powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 start
+powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 park
+```
+
+The local aggregate wrapper does:
+
+- `start`
+  - start lane tunnels first
+  - then start Chrome profiles
+- `park`
+  - stop Chrome profiles first
+  - then stop tunnels
+- `status`
+  - aggregate local tunnel and Chrome state into one JSON payload
 
 If object storage is not configured yet, you can allow local-only artifact registration for demo runs:
 

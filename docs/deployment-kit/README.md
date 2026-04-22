@@ -53,6 +53,8 @@ Supporting pieces:
   - `worker/scripts/render-extension-bundle.py`
 - host-process same-VM lab orchestration can be coordinated with:
   - `control/scripts/two-lane-lab-service.sh`
+- local Windows same-VM lab orchestration can be coordinated with:
+  - `control/scripts/two-lane-local-lab.ps1`
 
 Use these docs for the lab path:
 
@@ -66,6 +68,15 @@ cd docs/deployment-kit/control
 ./scripts/two-lane-lab-service.sh status
 ./scripts/two-lane-lab-service.sh start
 ./scripts/two-lane-lab-service.sh park
+```
+
+Same-VM local Windows orchestration helper:
+
+```powershell
+cd F:\vm201 Coolify\flowkit\docs\deployment-kit\control\scripts
+powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 start
+powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 park
 ```
 
 Important:
