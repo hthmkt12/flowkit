@@ -51,11 +51,22 @@ Supporting pieces:
 - worker bootstrap now supports custom deploy root and per-lane port overrides
 - extension bundles can be rendered with lane-specific endpoints using:
   - `worker/scripts/render-extension-bundle.py`
+- host-process same-VM lab orchestration can be coordinated with:
+  - `control/scripts/two-lane-lab-service.sh`
 
 Use these docs for the lab path:
 
 1. [worker/BOOTSTRAP-RUNBOOK.md](/F:/vm201 Coolify/flowkit/docs/deployment-kit/worker/BOOTSTRAP-RUNBOOK.md)
 2. [two-lane-same-vm-hth2-box-handoff.md](/F:/vm201 Coolify/flowkit/docs/deployment-kit/two-lane-same-vm-hth2-box-handoff.md)
+
+Same-VM remote orchestration helper:
+
+```bash
+cd docs/deployment-kit/control
+./scripts/two-lane-lab-service.sh status
+./scripts/two-lane-lab-service.sh start
+./scripts/two-lane-lab-service.sh park
+```
 
 Important:
 

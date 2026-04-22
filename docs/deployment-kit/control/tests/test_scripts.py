@@ -2,6 +2,7 @@ from pathlib import Path
 import socket
 import subprocess
 import threading
+import tempfile
 
 
 def _wsl_path(path: Path) -> str:
@@ -211,6 +212,103 @@ def test_control_service_script_health_handles_connection_reset():
 
     assert result.returncode == 1
     assert '"status": "timeout"' in result.stdout.lower()
+
+
+def test_two_lane_lab_service_script_help():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "two-lane-lab-service.sh"
+
+    result = subprocess.run(
+        ["bash", _wsl_path(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "LANE_01_SERVICE_SCRIPT" in result.stdout
+    assert "LANE_02_SERVICE_SCRIPT" in result.stdout
+    assert "<start|park|status>" in result.stdout
+
+
+def test_two_lane_lab_service_script_status_aggregates_wrappers():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "two-lane-lab-service.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        control_stub = root / "control.sh"
+        lane01_stub = root / "lane01.sh"
+        lane02_stub = root / "lane02.sh"
+
+        control_stub.write_text("#!/usr/bin/env bash\necho '{\"component\":\"control\",\"state\":\"up\"}'\n", encoding="utf-8", newline="\n")
+        lane01_stub.write_text("#!/usr/bin/env bash\necho '{\"component\":\"lane-01\",\"state\":\"ready\"}'\n", encoding="utf-8", newline="\n")
+        lane02_stub.write_text("#!/usr/bin/env bash\necho '{\"component\":\"lane-02\",\"state\":\"paused\"}'\n", encoding="utf-8", newline="\n")
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"CONTROL_SERVICE_SCRIPT='{_wsl_path(control_stub)}'",
+                        f"LANE_01_SERVICE_SCRIPT='{_wsl_path(lane01_stub)}'",
+                        f"LANE_02_SERVICE_SCRIPT='{_wsl_path(lane02_stub)}'",
+                        f"'{_wsl_path(script)}'",
+                        "status",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert '"control"' in result.stdout
+    assert '"lane_01"' in result.stdout
+    assert '"lane_02"' in result.stdout
+    assert '"paused"' in result.stdout
+
+
+def test_two_lane_lab_service_script_park_stops_lanes_before_control():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "two-lane-lab-service.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        log_file = root / "calls.log"
+        stub_body = (
+            "#!/usr/bin/env bash\n"
+            f"echo \"$(basename \"$0\"):$1\" >> '{_wsl_path(log_file)}'\n"
+            "echo '{\"ok\":true}'\n"
+        )
+        control_stub = root / "control.sh"
+        lane01_stub = root / "lane01.sh"
+        lane02_stub = root / "lane02.sh"
+        for stub in (control_stub, lane01_stub, lane02_stub):
+            stub.write_text(stub_body, encoding="utf-8", newline="\n")
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"CONTROL_SERVICE_SCRIPT='{_wsl_path(control_stub)}'",
+                        f"LANE_01_SERVICE_SCRIPT='{_wsl_path(lane01_stub)}'",
+                        f"LANE_02_SERVICE_SCRIPT='{_wsl_path(lane02_stub)}'",
+                        f"'{_wsl_path(script)}'",
+                        "park",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        calls = log_file.read_text(encoding="utf-8").splitlines()
+
+    assert result.returncode == 0
+    assert calls[:3] == ["lane01.sh:stop", "lane02.sh:stop", "control.sh:stop"]
 
 
 def test_control_compose_exposes_pythonpath_for_all_python_services():
