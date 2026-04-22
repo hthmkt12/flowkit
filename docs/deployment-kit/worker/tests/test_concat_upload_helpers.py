@@ -5,6 +5,7 @@ from uuid import uuid4
 from fk_worker import media
 from fk_worker import stages
 from fk_worker import storage
+from fk_worker import upload
 from fk_worker.media import canonical_clip_name, prefer_scene_video_url
 
 
@@ -102,6 +103,87 @@ def test_handle_upload_artifacts_serializes_uuid_chapter_id(monkeypatch, tmp_pat
     result = stages.handle_upload_artifacts(chapter, {})
 
     assert result["chapter_id"] == str(chapter_id)
+
+
+def test_handle_upload_artifacts_uses_public_storage_uri_when_upload_succeeds(monkeypatch, tmp_path):
+    final_path = tmp_path / "chapter_final.mp4"
+    final_path.write_bytes(b"video")
+
+    inserted = []
+    updates = []
+    monkeypatch.setattr(stages, "settings", SimpleNamespace(r2_prefix="projects", lane_id="lane-01", allow_local_artifact_fallback=False))
+    monkeypatch.setattr(stages, "upload_file", lambda path, key: f"https://cdn.example.com/{key}")
+    monkeypatch.setattr(stages, "sha256_file", lambda path: "sha256")
+    monkeypatch.setattr(stages, "insert_artifact", lambda **kwargs: inserted.append(kwargs))
+    monkeypatch.setattr(stages, "update_chapter_state", lambda chapter_id, **kwargs: updates.append((chapter_id, kwargs)))
+
+    chapter = {
+        "id": "chapter-1",
+        "project_id": "project-1",
+        "project_slug": "project_slug",
+        "chapter_slug": "chapter_slug",
+        "chapter_metadata": {"local_final_path": str(final_path)},
+    }
+
+    result = stages.handle_upload_artifacts(chapter, {})
+
+    assert result["upload_mode"] == "r2"
+    assert result["uploaded"] == ["https://cdn.example.com/projects/project_slug/chapter_slug/final.mp4"]
+    assert inserted[0]["storage_uri"] == "https://cdn.example.com/projects/project_slug/chapter_slug/final.mp4"
+    assert updates[0][1]["metadata_patch"]["upload_mode"] == "r2"
+
+
+def test_upload_file_returns_public_url_when_public_base_is_configured(monkeypatch, tmp_path):
+    path = tmp_path / "chapter_final.mp4"
+    path.write_bytes(b"video")
+    uploaded = []
+
+    class FakeClient:
+        def upload_file(self, filename, bucket, key, ExtraArgs=None):
+            uploaded.append((filename, bucket, key, ExtraArgs))
+
+    monkeypatch.setattr(
+        upload,
+        "settings",
+        SimpleNamespace(
+            r2_access_key_id="key-id",
+            r2_secret_access_key="secret-key",
+            r2_endpoint="https://example.r2.cloudflarestorage.com",
+            r2_bucket="flowkit-output",
+            r2_public_base="https://cdn.example.com/base/",
+        ),
+    )
+    monkeypatch.setattr(upload, "s3_client", lambda: FakeClient())
+
+    uri = upload.upload_file(path, "projects/demo/final.mp4")
+
+    assert uri == "https://cdn.example.com/base/projects/demo/final.mp4"
+    assert uploaded[0][1] == "flowkit-output"
+
+
+def test_upload_file_raises_clear_error_when_storage_config_is_missing(monkeypatch, tmp_path):
+    path = tmp_path / "chapter_final.mp4"
+    path.write_bytes(b"video")
+
+    monkeypatch.setattr(
+        upload,
+        "settings",
+        SimpleNamespace(
+            r2_access_key_id="",
+            r2_secret_access_key="",
+            r2_endpoint="",
+            r2_bucket="",
+            r2_public_base="",
+        ),
+    )
+
+    try:
+        upload.upload_file(path, "projects/demo/final.mp4")
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "R2_BUCKET" in str(exc)
+        assert "R2_ACCESS_KEY_ID" in str(exc)
+        assert "R2_SECRET_ACCESS_KEY" in str(exc)
 
 
 def test_update_chapter_state_supports_chapter_output_uri(monkeypatch):
