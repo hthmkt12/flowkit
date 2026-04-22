@@ -31,12 +31,34 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTROL_ROOT="${CONTROL_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+CONTROL_PROFILE_FILE="${CONTROL_PROFILE_FILE:-}"
+
+load_env_file() {
+  local env_file="$1"
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    if [[ -z "${!key+x}" ]]; then
+      export "$key=$value"
+    fi
+  done < "$env_file"
+}
+
+if [[ -n "$CONTROL_PROFILE_FILE" ]]; then
+  load_env_file "$CONTROL_PROFILE_FILE"
+fi
+
 RUNTIME_ROOT="${RUNTIME_ROOT:-$CONTROL_ROOT}"
 CONTROL_API_URL="${CONTROL_API_URL:-http://127.0.0.1:8080}"
 CONTROL_API_PID_FILE="${CONTROL_API_PID_FILE:-$RUNTIME_ROOT/control-api.pid}"
 SCHEDULER_PID_FILE="${SCHEDULER_PID_FILE:-$RUNTIME_ROOT/scheduler.pid}"
 CONTROL_API_LOG="${CONTROL_API_LOG:-$RUNTIME_ROOT/control-api.log}"
 SCHEDULER_LOG="${SCHEDULER_LOG:-$RUNTIME_ROOT/scheduler.log}"
+CONTROL_API_START_SCRIPT="${CONTROL_API_START_SCRIPT:-$SCRIPT_DIR/start-control-api.sh}"
+SCHEDULER_START_SCRIPT="${SCHEDULER_START_SCRIPT:-$SCRIPT_DIR/start-scheduler.sh}"
 START_DELAY_SECONDS="${START_DELAY_SECONDS:-3}"
 WAIT_FOR_HEALTH="${WAIT_FOR_HEALTH:-1}"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-20}"
@@ -155,9 +177,9 @@ case "$ACTION" in
   start)
     stop_pid_file "$CONTROL_API_PID_FILE"
     stop_pid_file "$SCHEDULER_PID_FILE"
-    nohup "$SCRIPT_DIR/start-control-api.sh" >"$CONTROL_API_LOG" 2>&1 &
+    nohup "$CONTROL_API_START_SCRIPT" >"$CONTROL_API_LOG" 2>&1 &
     echo $! > "$CONTROL_API_PID_FILE"
-    nohup "$SCRIPT_DIR/start-scheduler.sh" >"$SCHEDULER_LOG" 2>&1 &
+    nohup "$SCHEDULER_START_SCRIPT" >"$SCHEDULER_LOG" 2>&1 &
     echo $! > "$SCHEDULER_PID_FILE"
     sleep "$START_DELAY_SECONDS"
     if [[ "$WAIT_FOR_HEALTH" == "1" ]]; then

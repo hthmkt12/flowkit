@@ -214,6 +214,114 @@ def test_control_service_script_health_handles_connection_reset():
     assert '"status": "timeout"' in result.stdout.lower()
 
 
+def test_control_service_script_status_loads_profile_file():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "control-service.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        api_pid = root / "control-api.pid"
+        scheduler_pid = root / "scheduler.pid"
+        api_pid.write_text("123\n", encoding="utf-8")
+        scheduler_pid.write_text("456\n", encoding="utf-8")
+        profile = root / "host-demo.env"
+        profile.write_text(
+            "\n".join(
+                [
+                    f"CONTROL_API_PID_FILE={_wsl_path(api_pid)}",
+                    f"SCHEDULER_PID_FILE={_wsl_path(scheduler_pid)}",
+                    "CONTROL_API_URL=http://127.0.0.1:9",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"CONTROL_PROFILE_FILE='{_wsl_path(profile)}'",
+                        f"'{_wsl_path(script)}'",
+                        "status",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert '"control_api_pid": 123' in result.stdout
+    assert '"scheduler_pid": 456' in result.stdout
+
+
+def test_control_service_script_start_uses_profile_start_scripts():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "control-service.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        calls = root / "calls.log"
+        api_pid = root / "control-api.pid"
+        scheduler_pid = root / "scheduler.pid"
+        api_start = root / "api-start.sh"
+        scheduler_start = root / "scheduler-start.sh"
+        api_start.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo api >> '{_wsl_path(calls)}'\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        scheduler_start.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo scheduler >> '{_wsl_path(calls)}'\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        profile = root / "host-demo.env"
+        profile.write_text(
+            "\n".join(
+                [
+                    f"CONTROL_API_START_SCRIPT={_wsl_path(api_start)}",
+                    f"SCHEDULER_START_SCRIPT={_wsl_path(scheduler_start)}",
+                    f"CONTROL_API_PID_FILE={_wsl_path(api_pid)}",
+                    f"SCHEDULER_PID_FILE={_wsl_path(scheduler_pid)}",
+                    "CONTROL_API_URL=http://127.0.0.1:9",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"CONTROL_PROFILE_FILE='{_wsl_path(profile)}'",
+                        "WAIT_FOR_HEALTH=0",
+                        "START_DELAY_SECONDS=0",
+                        f"'{_wsl_path(script)}'",
+                        "start",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        called = calls.read_text(encoding="utf-8").splitlines()
+
+    assert result.returncode == 0
+    assert sorted(called) == ["api", "scheduler"]
+
+
 def test_two_lane_lab_service_script_help():
     script = Path(__file__).resolve().parents[1] / "scripts" / "two-lane-lab-service.sh"
 
@@ -267,6 +375,47 @@ def test_two_lane_lab_service_script_status_aggregates_wrappers():
     assert '"lane_01"' in result.stdout
     assert '"lane_02"' in result.stdout
     assert '"paused"' in result.stdout
+
+
+def test_two_lane_lab_service_script_uses_default_host_demo_profile():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "two-lane-lab-service.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        control_stub = root / "control.sh"
+        lane01_stub = root / "lane01.sh"
+        lane02_stub = root / "lane02.sh"
+
+        control_stub.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo \"{\\\"profile\\\":\\\"$CONTROL_PROFILE_FILE\\\"}\"\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        lane01_stub.write_text("#!/usr/bin/env bash\necho '{\"component\":\"lane-01\"}'\n", encoding="utf-8", newline="\n")
+        lane02_stub.write_text("#!/usr/bin/env bash\necho '{\"component\":\"lane-02\"}'\n", encoding="utf-8", newline="\n")
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"CONTROL_SERVICE_SCRIPT='{_wsl_path(control_stub)}'",
+                        f"LANE_01_SERVICE_SCRIPT='{_wsl_path(lane01_stub)}'",
+                        f"LANE_02_SERVICE_SCRIPT='{_wsl_path(lane02_stub)}'",
+                        f"'{_wsl_path(script)}'",
+                        "status",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert "host-demo.env" in result.stdout
 
 
 def test_two_lane_lab_service_script_park_stops_lanes_before_control():

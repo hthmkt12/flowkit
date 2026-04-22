@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTROL_SERVICE_SCRIPT="${CONTROL_SERVICE_SCRIPT:-$SCRIPT_DIR/control-service.sh}"
 LANE_01_SERVICE_SCRIPT="${LANE_01_SERVICE_SCRIPT:-/home/hth2/flowkit-worker-demo/scripts/lane-service.sh}"
 LANE_02_SERVICE_SCRIPT="${LANE_02_SERVICE_SCRIPT:-/home/hth2/flowkit-worker-demo-lane-02/scripts/lane-service.sh}"
+CONTROL_PROFILE_FILE="${CONTROL_PROFILE_FILE:-$(cd "$SCRIPT_DIR/.." && pwd)/host-demo.env}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 run_json_action() {
@@ -37,7 +38,11 @@ run_json_action() {
       return 0
     fi
   fi
-  bash "$script_path" "$action"
+  if [[ "$script_path" == "$CONTROL_SERVICE_SCRIPT" ]]; then
+    CONTROL_PROFILE_FILE="$CONTROL_PROFILE_FILE" bash "$script_path" "$action"
+  else
+    bash "$script_path" "$action"
+  fi
 }
 
 print_status() {

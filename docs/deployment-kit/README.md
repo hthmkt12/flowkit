@@ -55,6 +55,8 @@ Supporting pieces:
   - `control/scripts/two-lane-lab-service.sh`
 - local Windows same-VM lab orchestration can be coordinated with:
   - `control/scripts/two-lane-local-lab.ps1`
+- host-demo VM profile is captured in:
+  - `control/host-demo.env`
 
 Use these docs for the lab path:
 
@@ -68,6 +70,15 @@ cd docs/deployment-kit/control
 ./scripts/two-lane-lab-service.sh status
 ./scripts/two-lane-lab-service.sh start
 ./scripts/two-lane-lab-service.sh park
+```
+
+Direct control wrapper with the host-demo profile:
+
+```bash
+cd docs/deployment-kit/control
+CONTROL_PROFILE_FILE=./host-demo.env ./scripts/control-service.sh status
+CONTROL_PROFILE_FILE=./host-demo.env ./scripts/control-service.sh start
+CONTROL_PROFILE_FILE=./host-demo.env ./scripts/control-service.sh stop
 ```
 
 Same-VM local Windows orchestration helper:
