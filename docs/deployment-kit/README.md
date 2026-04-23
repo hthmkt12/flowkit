@@ -21,7 +21,7 @@ Contents:
   - systemd units
   - lane env template
   - Chrome startup scripts
-  - artifact upload script skeleton
+  - artifact upload replay helper
 - `lane-env/`
   - ready-to-copy env files for lane-01 to lane-10
 - `two-lane-same-vm-hth2-box-handoff.md`

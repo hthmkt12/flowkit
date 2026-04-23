@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import socket
@@ -156,6 +157,91 @@ def test_verify_object_storage_script_reports_missing_required_config():
     assert '"status": "missing_config"' in result.stdout
     assert "R2_ACCESS_KEY_ID" in result.stdout
     assert "R2_SECRET_ACCESS_KEY" in result.stdout
+
+
+def test_upload_artifacts_script_help():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "upload-artifacts.sh"
+
+    result = subprocess.run(
+        ["bash", _wsl_path(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "CHAPTER_ID" in result.stdout
+    assert "CLEANUP_STALE" in result.stdout
+    assert "DRY_RUN" in result.stdout
+
+
+def test_upload_artifacts_script_requires_chapter_id():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "upload-artifacts.sh"
+
+    result = subprocess.run(
+        ["bash", _wsl_path(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Usage:" in result.stdout
+
+
+def test_upload_artifacts_script_dry_run_reports_loaded_config():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "upload-artifacts.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        env_dir = root / "env"
+        env_dir.mkdir()
+        lane_env = env_dir / "lane.env"
+        lane_env.write_text(
+            "\n".join(
+                [
+                    "LANE_ID=lane-02",
+                    "R2_BUCKET=veo3",
+                    "R2_ENDPOINT=https://example.r2.cloudflarestorage.com",
+                    "R2_PUBLIC_BASE=https://cdn.example.com",
+                    "R2_ACCESS_KEY_ID=test-access-key",
+                    "R2_SECRET_ACCESS_KEY=test-secret-key",
+                    "ALLOW_LOCAL_ARTIFACT_FALLBACK=1",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"LANE_ROOT='{_wsl_path(root)}'",
+                        "DRY_RUN='1'",
+                        f"'{_wsl_path(script)}'",
+                        "chapter-123",
+                        "--cleanup-stale",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "dry_run"
+    assert payload["chapter_id"] == "chapter-123"
+    assert payload["cleanup_stale"] is True
+    assert payload["lane_id"] == "lane-02"
+    assert payload["r2_bucket"] == "veo3"
+    assert payload["r2_public_base"] == "https://cdn.example.com"
+    assert payload["allow_local_artifact_fallback"] is False
 
 
 def test_repair_output_ownership_script_help():

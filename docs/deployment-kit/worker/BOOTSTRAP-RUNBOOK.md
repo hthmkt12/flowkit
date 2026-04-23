@@ -142,6 +142,37 @@ Expected outcomes:
 - `status=missing_config`
   - one or more required keys are still missing
 
+Replay upload for one completed chapter:
+
+```bash
+./scripts/upload-artifacts.sh <chapter-id>
+```
+
+Useful when:
+
+- `CONCAT_CHAPTER` already produced a final file
+- you want a zero-credit replay of `UPLOAD_ARTIFACTS`
+- you want to verify the current object-storage config on an already-completed
+  chapter
+
+Optional stale-row cleanup after a successful replay:
+
+```bash
+./scripts/upload-artifacts.sh <chapter-id> --cleanup-stale
+```
+
+Notes:
+
+- the helper loads `env/lane.env`
+- by default it forces `ALLOW_LOCAL_ARTIFACT_FALLBACK=0` for the replay so a bad
+  storage config fails loudly instead of silently writing `file://...`
+- if `R2_PUBLIC_BASE` is set, the helper verifies public `https://...` artifact
+  URLs
+- if `R2_PUBLIC_BASE` is not set, the helper verifies `s3://...` object writes
+  with `head_object`
+- `DRY_RUN=1 ./scripts/upload-artifacts.sh <chapter-id>` prints the resolved
+  config without touching Postgres or object storage
+
 ## Host-process lane-runner mode
 
 Useful when the FlowKit agent already exists outside this worker kit, for example:
