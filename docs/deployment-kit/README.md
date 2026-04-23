@@ -22,6 +22,7 @@ Contents:
   - lane env template
   - Chrome startup scripts
   - artifact upload replay helper
+  - live worker-kit sync helper
 - `lane-env/`
   - ready-to-copy env files for lane-01 to lane-10
 - `two-lane-same-vm-hth2-box-handoff.md`

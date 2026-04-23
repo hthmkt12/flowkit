@@ -244,6 +244,71 @@ def test_upload_artifacts_script_dry_run_reports_loaded_config():
     assert payload["allow_local_artifact_fallback"] is False
 
 
+def test_sync_live_worker_kit_script_help():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "sync-live-worker-kit.sh"
+
+    result = subprocess.run(
+        ["bash", _wsl_path(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "REMOTE_HOST" in result.stdout
+    assert "LANE_ROOTS" in result.stdout
+    assert "SOURCE_ROOT" in result.stdout
+
+
+def test_sync_live_worker_kit_script_dry_run_emits_plan():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "sync-live-worker-kit.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        source_root = root / "worker"
+        (source_root / "fk_worker").mkdir(parents=True)
+        (source_root / "scripts").mkdir(parents=True)
+        (source_root / "fk_worker" / "__init__.py").write_text('"""test"""\n', encoding="utf-8")
+        (source_root / "scripts" / "upload-artifacts.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        (source_root / "requirements.txt").write_text("psycopg\n", encoding="utf-8")
+        (source_root / "lane.env.example").write_text("LANE_ID=lane-01\n", encoding="utf-8")
+        (source_root / "docker-compose.worker.yml").write_text("services: {}\n", encoding="utf-8")
+        (source_root / "Dockerfile.worker").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        "DRY_RUN='1'",
+                        "REMOTE_HOST='example-host'",
+                        "LANE_ROOTS='/srv/lane-a /srv/lane-b'",
+                        f"SOURCE_ROOT='{_wsl_path(source_root)}'",
+                        f"'{_wsl_path(script)}'",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "dry_run"
+    assert payload["remote_host"] == "example-host"
+    assert payload["lane_roots"] == ["/srv/lane-a", "/srv/lane-b"]
+    assert payload["copy_items"] == [
+        "fk_worker",
+        "scripts",
+        "requirements.txt",
+        "lane.env.example",
+        "docker-compose.worker.yml",
+        "Dockerfile.worker",
+    ]
+
+
 def test_repair_output_ownership_script_help():
     script = Path(__file__).resolve().parents[1] / "scripts" / "repair-output-ownership.sh"
 

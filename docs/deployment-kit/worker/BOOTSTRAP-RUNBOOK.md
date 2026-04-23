@@ -173,6 +173,46 @@ Notes:
 - `DRY_RUN=1 ./scripts/upload-artifacts.sh <chapter-id>` prints the resolved
   config without touching Postgres or object storage
 
+Sync the canonical worker kit from this repo to live lane roots:
+
+```bash
+./scripts/sync-live-worker-kit.sh
+```
+
+Default target:
+
+- remote host:
+  - `hth2-box`
+- lane roots:
+  - `/home/hth2/flowkit-worker-demo`
+  - `/home/hth2/flowkit-worker-demo-lane-02`
+
+What it syncs:
+
+- `fk_worker/`
+- `scripts/`
+- `requirements.txt`
+- `lane.env.example`
+- `docker-compose.worker.yml`
+- `Dockerfile.worker`
+
+Preview only:
+
+```bash
+DRY_RUN=1 ./scripts/sync-live-worker-kit.sh
+```
+
+Windows/WSL note:
+
+- if WSL `ssh` / `scp` does not share the same SSH config or keys as Windows,
+  run with Windows OpenSSH binaries:
+
+```bash
+SSH_BIN=/mnt/c/Windows/System32/OpenSSH/ssh.exe \
+SCP_BIN=/mnt/c/Windows/System32/OpenSSH/scp.exe \
+./scripts/sync-live-worker-kit.sh
+```
+
 ## Host-process lane-runner mode
 
 Useful when the FlowKit agent already exists outside this worker kit, for example:
