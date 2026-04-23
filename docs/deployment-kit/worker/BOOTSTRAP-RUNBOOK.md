@@ -313,6 +313,45 @@ If object storage is not configured yet, you can allow local-only artifact regis
 ALLOW_LOCAL_ARTIFACT_FALLBACK=1
 ```
 
+## Output ownership cleanup
+
+If old demo runs left `root:root` files under `runtime/output`, use the helper
+below before re-running concat/upload on the same output tree:
+
+```bash
+cd docs/deployment-kit/worker/scripts
+./repair-output-ownership.sh scan
+```
+
+Typical host-demo repair on VM:
+
+```bash
+OUTPUT_ROOT=/home/hth2/flowkit-worker-demo/runtime/output \
+EXPECT_OWNER=hth2 \
+EXPECT_GROUP=hth2 \
+SUDO_BIN= \
+DRY_RUN=1 \
+./repair-output-ownership.sh fix
+```
+
+If the dry-run output looks correct, run the real fix with privilege:
+
+```bash
+sudo env \
+  OUTPUT_ROOT=/home/hth2/flowkit-worker-demo/runtime/output \
+  EXPECT_OWNER=hth2 \
+  EXPECT_GROUP=hth2 \
+  SUDO_BIN= \
+  DRY_RUN=0 \
+  ./repair-output-ownership.sh fix
+```
+
+Notes:
+
+- `scan` reports any file whose owner or group differs from the expected values
+- `fix` only changes mismatched files
+- `SUDO_BIN=` is useful when the whole script is already running under `sudo`
+
 ## Same-VM lane-02 demo on `hth2-box`
 
 Keep `lane-01` untouched on `8100/9222`. Bootstrap `lane-02` into a separate host root and health port:
