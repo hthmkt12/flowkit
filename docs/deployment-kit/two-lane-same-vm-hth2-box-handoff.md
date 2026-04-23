@@ -1319,3 +1319,83 @@ Current end state:
 - public `r2.dev` access is enabled
 - live worker envs include `R2_PUBLIC_BASE`
 - migrated test chapter artifact rows now use public HTTP URLs, not `s3://...`
+
+## April 23, 2026 proof: new fresh run now stores public HTTP URLs directly
+
+After the public URL cutover, one brand-new low-cost control-routed run was
+executed to prove that a fresh chapter now lands directly on public HTTP
+artifact URLs without any replay or artifact migration step.
+
+Created via control API:
+
+- project id:
+  - `4e316049-d093-48f4-b260-8cfd589f4e3d`
+- chapter id:
+  - `1b9776bd-3427-4ae4-b85f-0022a9a5e2cf`
+- title:
+  - `Public HTTP Fresh Smoke 2026-04-23 10-22`
+- target shape:
+  - `1 chapter`
+  - `8 seconds`
+  - `1 scene`
+
+Observed scheduler behavior:
+
+- control scheduler selected:
+  - `lane-02`
+- lane state moved:
+  - `idle -> busy -> idle`
+
+Observed stage progression:
+
+- `CREATE_PROJECT -> completed`
+- `CREATE_ENTITIES -> completed`
+- `CREATE_VIDEO -> completed`
+- `CREATE_SCENES -> completed`
+- `GEN_REFS -> completed`
+- `GEN_IMAGES -> completed`
+- `GEN_VIDEOS -> completed`
+- `CONCAT_CHAPTER -> completed`
+- `UPLOAD_ARTIFACTS -> completed`
+
+Observed chapter result:
+
+- final chapter status:
+  - `completed`
+- final local output:
+  - `/home/hth2/flowkit-worker-demo-lane-02/runtime/output/public_http_fresh_smoke_2026_04_23_10_22_chapter_01/public_http_fresh_smoke_2026_04_23_10_22_chapter_01_final.mp4`
+- chapter metadata now includes:
+  - `upload_mode=r2`
+  - `uploaded_uris` pointing directly at public `https://...` URLs
+
+Artifact rows created for the fresh chapter:
+
+- `chapter_final`
+  - `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/4e316049_d093_48f4_b260_8cfd589f4e3d/public_http_fresh_smoke_2026_04_23_10_22_chapter_01/final.mp4`
+- `manifest`
+  - `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/4e316049_d093_48f4_b260_8cfd589f4e3d/public_http_fresh_smoke_2026_04_23_10_22_chapter_01/meta.json`
+
+Direct public verification passed:
+
+- `final.mp4`
+  - `HTTP 200`
+  - `content-type=video/mp4`
+  - `content-length=3354090`
+- `meta.json`
+  - `HTTP 200`
+  - `content-type=application/json`
+  - `content-length=380`
+
+Meaning:
+
+- the system is now proven beyond replay/migration cleanup
+- a brand-new control-routed chapter can finish and write public HTTP artifact
+  URLs directly on first completion
+- no artifact post-fix was needed for this fresh chapter
+
+Post-proof ops step:
+
+- local Windows lab was parked again
+- remote VM control API, scheduler, and lane runners were parked again
+- lab end state after proof is intentionally back to parked to avoid further
+  credit spend
