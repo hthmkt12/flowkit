@@ -97,6 +97,92 @@ def test_run_worker_demo_script_help():
     assert "RUNNER_PID_FILE" in result.stdout
 
 
+def test_repair_output_ownership_script_help():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "repair-output-ownership.sh"
+
+    result = subprocess.run(
+        ["bash", _wsl_path(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "EXPECT_OWNER" in result.stdout
+    assert "DRY_RUN" in result.stdout
+    assert "<scan|fix>" in result.stdout
+
+
+def test_repair_output_ownership_script_scan_reports_mismatches():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "repair-output-ownership.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        output_root = root / "runtime" / "output"
+        output_root.mkdir(parents=True)
+        mismatched = output_root / "final.mp4"
+        mismatched.write_text("video", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"OUTPUT_ROOT='{_wsl_path(output_root)}'",
+                        "EXPECT_OWNER='root'",
+                        "EXPECT_GROUP='root'",
+                        f"'{_wsl_path(script)}'",
+                        "scan",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert '"candidate_count": 1' in result.stdout
+    assert "final.mp4" in result.stdout
+
+
+def test_repair_output_ownership_script_fix_dry_run_emits_chown_commands():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "repair-output-ownership.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        output_root = root / "runtime" / "output"
+        output_root.mkdir(parents=True)
+        mismatched = output_root / "final.mp4"
+        mismatched.write_text("video", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"OUTPUT_ROOT='{_wsl_path(output_root)}'",
+                        "EXPECT_OWNER='root'",
+                        "EXPECT_GROUP='root'",
+                        "SUDO_BIN=''",
+                        "DRY_RUN='1'",
+                        f"'{_wsl_path(script)}'",
+                        "fix",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert '"mode": "dry_run"' in result.stdout
+    assert '"chown root:root' in result.stdout
+
+
 def test_lane_service_script_reports_stopped_status():
     script = Path(__file__).resolve().parents[1] / "scripts" / "lane-service.sh"
 
