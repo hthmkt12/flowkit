@@ -993,3 +993,226 @@ On Windows:
   - same VM dual lane
   - second VM for lane-02
 - But the requested direction for next session is to pursue same-VM lane-02 first.
+
+## April 23, 2026 update: R2 upload is now proven
+
+This update supersedes the older "next session" prompt above for storage proof.
+
+### What was proved
+
+A zero-credit live replay of the real worker upload stage was run directly on
+`hth2-box` for the already-completed control-routed `lane-02` chapter:
+
+- project id:
+  - `791c0c5d-48e9-4026-b460-b2f4f25e63e9`
+- chapter id:
+  - `383145d8-7fdf-47bb-af29-f4a967ce9f95`
+- output root:
+  - `/home/hth2/flowkit-worker-demo-lane-02/runtime/output/control_create_only_smoke_2026_04_22_chapter_01`
+
+Replay specifics:
+
+- lane env loaded from:
+  - `/home/hth2/flowkit-worker-demo-lane-02/env/lane.env`
+- live worker code loaded from:
+  - `/home/hth2/flowkit-worker-demo-lane-02/fk_worker`
+- temporary proof override:
+  - `ALLOW_LOCAL_ARTIFACT_FALLBACK=0`
+- actual stage invoked:
+  - `handle_upload_artifacts()`
+
+Observed result:
+
+- stage finished:
+  - `status=completed`
+  - `upload_mode=r2`
+- uploaded URIs:
+  - `s3://dgt-audio/projects/791c0c5d_48e9_4026_b460_b2f4f25e63e9/control_create_only_smoke_2026_04_22_chapter_01/final.mp4`
+  - `s3://dgt-audio/projects/791c0c5d_48e9_4026_b460_b2f4f25e63e9/control_create_only_smoke_2026_04_22_chapter_01/meta.json`
+- artifact count for that chapter moved:
+  - `2 -> 4`
+- newest artifact rows are now:
+  - `chapter_final` with `upload_mode=r2`
+  - `manifest` with `upload_mode=r2`
+- previous `local_fallback` artifact rows remain as historical rows:
+  - `chapter_final`
+  - `manifest`
+
+Direct R2 verification also passed:
+
+- `head_object` on `final.mp4` returned:
+  - `content_length=4907033`
+  - `content_type=video/mp4`
+- `head_object` on `meta.json` returned:
+  - `content_length=372`
+  - `content_type=application/json`
+
+### Interpretation
+
+- real object storage write path is now proven on live worker code with live
+  lane env
+- no Google Flow credit was spent for this proof
+- no local Chrome profile, SSH tunnel, control API, scheduler, or runner
+  restart was required
+- `R2_PUBLIC_BASE` is still blank, so storage URIs remain `s3://...`, not
+  public HTTP URLs
+
+### Lowest-cost next action now
+
+If the goal remains minimizing credit burn:
+
+- keep the lab parked
+- do **not** restart scheduler/control just to re-prove storage
+- treat R2 upload proof as complete
+
+Only optional follow-up work remains:
+
+1. Set and verify `R2_PUBLIC_BASE` if public artifact URLs are needed.
+2. Decide whether to keep or prune older `local_fallback` artifact rows for
+   chapters later re-uploaded to R2.
+3. Otherwise stop here; same-VM dual lane plus R2 upload proof is already in a
+   good end state for this lab.
+
+## April 23, 2026 update: live bucket switched from `dgt-audio` to `veo3`
+
+The earlier `dgt-audio` choice was only a temporary live workaround while
+checking which bucket the provided S3 credentials could actually access.
+
+Later verification on the live VM showed:
+
+- `HeadBucket(veo3)` succeeds
+- `HeadBucket(flowkit-output)` still fails with not-found
+- `CreateBucket(flowkit-output)` still fails with access denied
+
+To separate this project from the temporary `dgt-audio` bucket:
+
+- `/home/hth2/flowkit-worker-demo/env/lane.env` was updated to:
+  - `R2_BUCKET=veo3`
+- `/home/hth2/flowkit-worker-demo-lane-02/env/lane.env` was updated to:
+  - `R2_BUCKET=veo3`
+
+Zero-credit replay proof was then run again on the same completed `lane-02`
+chapter:
+
+- chapter id:
+  - `383145d8-7fdf-47bb-af29-f4a967ce9f95`
+- replay still forced:
+  - `ALLOW_LOCAL_ARTIFACT_FALLBACK=0`
+
+Observed result:
+
+- uploaded URIs now also exist under:
+  - `s3://veo3/projects/791c0c5d_48e9_4026_b460_b2f4f25e63e9/control_create_only_smoke_2026_04_22_chapter_01/final.mp4`
+  - `s3://veo3/projects/791c0c5d_48e9_4026_b460_b2f4f25e63e9/control_create_only_smoke_2026_04_22_chapter_01/meta.json`
+- artifact count for that chapter moved:
+  - `4 -> 6`
+- newest artifact rows are now:
+  - `chapter_final` with `storage_uri` in `veo3`
+  - `manifest` with `storage_uri` in `veo3`
+- direct `head_object` verification passed for both uploaded objects in
+  `veo3`
+
+Current interpretation:
+
+- live bucket for this lab should now be treated as:
+  - `veo3`
+- older historical artifact rows under:
+  - `file://...`
+  - `s3://dgt-audio/...`
+  still remain in the DB for the same chapter
+- newest successful live object-storage proof now points at:
+  - `s3://veo3/...`
+
+## April 23, 2026 cleanup: stale artifact history removed for test chapter
+
+The user approved cleanup for the test chapter artifact history after the move
+to `veo3`.
+
+Target chapter:
+
+- chapter id:
+  - `383145d8-7fdf-47bb-af29-f4a967ce9f95`
+
+Cleanup actions completed:
+
+- deleted 4 stale artifact DB rows for that chapter:
+  - 2 rows with `storage_uri=file://...`
+  - 2 rows with `storage_uri=s3://dgt-audio/...`
+- deleted the 2 old `dgt-audio` objects for that chapter:
+  - `final.mp4`
+  - `meta.json`
+- kept the local files on VM in place
+- kept the newest `veo3` artifact rows in place
+
+Post-cleanup verification:
+
+- artifact row count for that chapter moved:
+  - `6 -> 2`
+- remaining rows are only:
+  - `chapter_final` -> `s3://veo3/.../final.mp4`
+  - `manifest` -> `s3://veo3/.../meta.json`
+- direct `head_object` verification still passes for both remaining `veo3`
+  objects
+- direct `head_object` verification on the deleted `dgt-audio` objects now
+  returns not found
+
+Current end state for that chapter:
+
+- DB history is clean
+- live storage source of truth is `veo3`
+- no stale `file://...` or `s3://dgt-audio/...` rows remain for that chapter
+
+## April 23, 2026 cleanup: remaining stale artifact rows were migrated and removed
+
+After the first cleanup, two older completed test chapters still had
+`file://...` artifact rows and no `veo3` replacement yet:
+
+1. `2d203365-f19c-47f1-b7ea-ddf20674df46`
+   - `control_create_only_smoke_lane_01_2026_04_22_chapter_01`
+2. `18f6fb64-98ec-4d54-8ed9-64dcd5de1b43`
+   - `lane_02_single_chapter_smoke_2026_04_22_09_02_chapter_01`
+
+Both chapters were handled with zero-credit direct replay using live worker code
+and current lane env, again forcing:
+
+- `ALLOW_LOCAL_ARTIFACT_FALLBACK=0`
+
+Observed upload results:
+
+- chapter `2d203365-f19c-47f1-b7ea-ddf20674df46`
+  - uploaded `chapter_final` into:
+    - `s3://veo3/projects/9765a16e_f869_4142_abda_53e85996a15e/control_create_only_smoke_lane_01_2026_04_22_chapter_01/final.mp4`
+- chapter `18f6fb64-98ec-4d54-8ed9-64dcd5de1b43`
+  - uploaded `chapter_final` into:
+    - `s3://veo3/projects/9e134864_af02_47c9_9b6b_cdabbf67bb14/lane_02_single_chapter_smoke_2026_04_22_09_02_chapter_01/final.mp4`
+  - uploaded `manifest` into:
+    - `s3://veo3/projects/9e134864_af02_47c9_9b6b_cdabbf67bb14/lane_02_single_chapter_smoke_2026_04_22_09_02_chapter_01/meta.json`
+
+Cleanup results:
+
+- for chapter `2d203365-f19c-47f1-b7ea-ddf20674df46`
+  - deleted 1 stale `file://...` row
+  - remaining artifact rows:
+    - 1 `veo3` row
+- for chapter `18f6fb64-98ec-4d54-8ed9-64dcd5de1b43`
+  - deleted 2 stale `file://...` rows
+  - remaining artifact rows:
+    - 2 `veo3` rows
+
+Post-cleanup verification:
+
+- chapter metadata for both chapters now reports:
+  - `upload_mode=r2`
+  - `uploaded_uris` pointing at `s3://veo3/...`
+- direct `head_object` verification passed for all remaining `veo3` objects
+- final global control-DB scan returned:
+  - no remaining artifact rows with:
+    - `storage_uri like 'file://%'`
+    - `storage_uri like 's3://dgt-audio/%'`
+
+Current storage end state:
+
+- live bucket for this lab is `veo3`
+- control DB no longer contains stale artifact rows pointing at:
+  - `file://...`
+  - `s3://dgt-audio/...`
