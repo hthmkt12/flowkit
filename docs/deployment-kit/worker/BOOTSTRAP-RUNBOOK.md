@@ -129,6 +129,19 @@ Notes:
 - when `R2_PUBLIC_BASE` is set, uploaded artifacts are stored in control DB as
   public HTTP URLs instead of `s3://...`
 
+Quick config check:
+
+```bash
+./scripts/verify-object-storage.sh
+```
+
+Expected outcomes:
+
+- `status=config_ready`
+  - required object storage keys are present
+- `status=missing_config`
+  - one or more required keys are still missing
+
 ## Host-process lane-runner mode
 
 Useful when the FlowKit agent already exists outside this worker kit, for example:
