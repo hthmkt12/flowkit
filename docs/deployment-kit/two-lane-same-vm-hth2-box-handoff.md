@@ -1443,3 +1443,61 @@ Meaning:
 
 - the fresh public-HTTP proof is now available as a reusable script, not only as
   an ad-hoc operator sequence
+
+## April 23, 2026 tooling update: one-command local proof wrapper now exists
+
+To avoid even the local multi-step orchestration, one more wrapper was added on
+the Windows side:
+
+- `docs/deployment-kit/control/scripts/public-http-proof.ps1`
+
+Purpose:
+
+- start local Windows lab
+- start remote VM lab
+- wait until remote control plus both lanes are actually ready
+- execute the remote `public-http-fresh-smoke.sh`
+- park both local and remote sides again in `finally`
+
+Important current contract:
+
+- action defaults to:
+  - `run`
+- also supports:
+  - `status`
+- useful environment overrides:
+  - `LOCAL_LAB_SCRIPT`
+  - `SSH_EXE`
+  - `REMOTE_HOST`
+  - `REMOTE_CONTROL_ROOT`
+  - `REMOTE_CONTROL_PROFILE`
+  - `REMOTE_LANE_ENV`
+  - `WAIT_FOR_READY`
+
+Live proof from the local Windows machine:
+
+- wrapper was run directly from the repo
+- it completed successfully end-to-end
+- helper-created project id:
+  - `375482ec-0d03-4685-89a8-70b989e3a449`
+- helper-created chapter id:
+  - `4be9ff20-7e58-44de-82aa-6ea894a58463`
+- all chapter jobs completed
+- returned artifact URLs were public HTTP URLs:
+  - `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/375482ec_0d03_4685_89a8_70b989e3a449/public_http_fresh_smoke_chapter_01/final.mp4`
+  - `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/375482ec_0d03_4685_89a8_70b989e3a449/public_http_fresh_smoke_chapter_01/meta.json`
+
+Post-proof verification:
+
+- local wrapper status after completion returned:
+  - no tunnels running
+  - no Chrome profiles running
+- remote wrapper status after completion returned:
+  - control API stopped
+  - scheduler stopped
+  - lane runners stopped
+
+Meaning:
+
+- the entire same-VM public HTTP proof path is now scriptable from the local
+  Windows machine with one command

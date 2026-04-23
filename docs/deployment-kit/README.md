@@ -17,6 +17,7 @@ Contents:
   - Redis job contract
   - service descriptions
   - fresh public-http smoke helper
+  - one-command local public-http proof wrapper
 - `worker/`
   - lane directory layout
   - systemd units
@@ -90,6 +91,13 @@ cd F:\vm201 Coolify\flowkit\docs\deployment-kit\control\scripts
 powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 status
 powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 start
 powershell -NoProfile -ExecutionPolicy Bypass -File .\two-lane-local-lab.ps1 park
+```
+
+One-command local proof wrapper:
+
+```powershell
+cd F:\vm201 Coolify\flowkit\docs\deployment-kit\control\scripts
+powershell -NoProfile -ExecutionPolicy Bypass -File .\public-http-proof.ps1 run
 ```
 
 Important:
