@@ -97,6 +97,67 @@ def test_run_worker_demo_script_help():
     assert "RUNNER_PID_FILE" in result.stdout
 
 
+def test_verify_object_storage_script_help():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "verify-object-storage.sh"
+
+    result = subprocess.run(
+        ["bash", _wsl_path(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "ENV_FILE" in result.stdout
+    assert "CHECK_NETWORK" in result.stdout
+    assert "R2_PUBLIC_BASE" in result.stdout
+
+
+def test_verify_object_storage_script_reports_missing_required_config():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "verify-object-storage.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        env_dir = root / "env"
+        env_dir.mkdir()
+        lane_env = env_dir / "lane.env"
+        lane_env.write_text(
+            "\n".join(
+                [
+                    "R2_BUCKET=flowkit-output",
+                    "R2_ENDPOINT=https://example.r2.cloudflarestorage.com",
+                    "R2_PUBLIC_BASE=https://cdn.example.com/base/",
+                    "R2_ACCESS_KEY_ID=",
+                    "R2_SECRET_ACCESS_KEY=",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"LANE_ROOT='{_wsl_path(root)}'",
+                        f"'{_wsl_path(script)}'",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 1
+    assert '"status": "missing_config"' in result.stdout
+    assert "R2_ACCESS_KEY_ID" in result.stdout
+    assert "R2_SECRET_ACCESS_KEY" in result.stdout
+
+
 def test_repair_output_ownership_script_help():
     script = Path(__file__).resolve().parents[1] / "scripts" / "repair-output-ownership.sh"
 
