@@ -1501,3 +1501,50 @@ Meaning:
 
 - the entire same-VM public HTTP proof path is now scriptable from the local
   Windows machine with one command
+
+## April 23, 2026 tooling update: operator quick reference + timestamped smoke titles
+
+One more low-risk ops-hardening pass was added after the public-HTTP proof
+wrappers were already in place.
+
+Updated docs:
+
+- `docs/deployment-kit/README.md`
+  - now includes a short operator quick reference for the 3 most important
+    commands:
+    - live worker-kit sync
+    - remote public-HTTP fresh smoke
+    - local one-command public-HTTP proof wrapper
+
+Updated scripts:
+
+- `docs/deployment-kit/control/scripts/public-http-fresh-smoke.sh`
+- `docs/deployment-kit/control/scripts/public-http-proof.ps1`
+
+Current behavior change:
+
+- if `SOURCE_TITLE` is not provided, both smoke helpers now auto-generate a
+  timestamped default title
+- wrapper default shape:
+  - `Public HTTP Wrapper Smoke YYYY-MM-DD HH-MM-SS`
+- remote helper default shape:
+  - `Public HTTP Fresh Smoke YYYY-MM-DD HH-MM-SS`
+
+Why this matters:
+
+- repeated smoke runs no longer depend on the operator remembering to provide a
+  unique title
+- this reduces accidental title collisions during repeated low-cost proof runs
+- the quick reference makes the current same-VM lab workflow easier to resume
+  from the repo alone
+
+Verification:
+
+- control deployment-kit test suite was re-run after the hardening pass
+- result:
+  - `51 passed`
+
+Current best operator posture remains:
+
+- keep the lab parked by default
+- only use the smoke helpers when a real live proof is intentionally needed

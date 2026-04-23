@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function New-DefaultSourceTitle([string]$BaseTitle) {
+    return "{0} {1}" -f $BaseTitle, (Get-Date -Format "yyyy-MM-dd HH-mm-ss")
+}
+
 function Show-Usage {
     @"
 Usage: .\public-http-proof.ps1 <run|status> [--help]
@@ -53,7 +57,7 @@ $remoteLabScript = if ($env:REMOTE_LAB_SCRIPT) { $env:REMOTE_LAB_SCRIPT } else {
 $remoteFreshSmokeScript = if ($env:REMOTE_FRESH_SMOKE_SCRIPT) { $env:REMOTE_FRESH_SMOKE_SCRIPT } else { "./scripts/public-http-fresh-smoke.sh" }
 $remoteControlProfile = if ($env:REMOTE_CONTROL_PROFILE) { $env:REMOTE_CONTROL_PROFILE } else { "/home/hth2/flowkit-control-demo/control/host-demo.env" }
 $remoteLaneEnv = if ($env:REMOTE_LANE_ENV) { $env:REMOTE_LANE_ENV } else { "/home/hth2/flowkit-worker-demo-lane-02/env/lane.env" }
-$sourceTitle = if ($env:SOURCE_TITLE) { $env:SOURCE_TITLE } else { "Public HTTP Wrapper Smoke" }
+$sourceTitle = if ([string]::IsNullOrWhiteSpace($env:SOURCE_TITLE)) { New-DefaultSourceTitle "Public HTTP Wrapper Smoke" } else { $env:SOURCE_TITLE }
 $sourceBrief = if ($env:SOURCE_BRIEF) { $env:SOURCE_BRIEF } else { "One-command wrapper proof for public HTTP artifact URLs." }
 $targetDurationSeconds = if ($env:TARGET_DURATION_SECONDS) { [int]$env:TARGET_DURATION_SECONDS } else { 8 }
 $chapterCount = if ($env:CHAPTER_COUNT) { [int]$env:CHAPTER_COUNT } else { 1 }

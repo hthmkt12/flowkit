@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import socket
 import subprocess
 import threading
@@ -146,6 +147,33 @@ def test_public_http_fresh_smoke_script_dry_run_loads_profile():
     assert '"chapter_count": 1' in result.stdout
     assert '"material_id": "realistic"' in result.stdout
     assert '"postgres_dsn_present": true' in result.stdout
+
+
+def test_public_http_fresh_smoke_script_dry_run_generates_timestamped_title_by_default():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "public-http-fresh-smoke.sh"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            " ".join(
+                [
+                    "POSTGRES_DSN='postgresql://fk:test@127.0.0.1:5432/fk_control'",
+                    "DRY_RUN='1'",
+                    f"'{_wsl_path(script)}'",
+                ]
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert re.search(
+        r'"source_title": "Public HTTP Fresh Smoke \d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}"',
+        result.stdout,
+    )
 
 
 def test_start_control_api_script_help():

@@ -100,6 +100,36 @@ cd F:\vm201 Coolify\flowkit\docs\deployment-kit\control\scripts
 powershell -NoProfile -ExecutionPolicy Bypass -File .\public-http-proof.ps1 run
 ```
 
+## Operator Quick Reference
+
+Three commands matter most for the current same-VM lab:
+
+1. Sync the canonical worker kit to both live lane roots:
+
+```bash
+cd /path/to/flowkit
+./docs/deployment-kit/worker/scripts/sync-live-worker-kit.sh
+```
+
+2. Run one remote low-cost public-HTTP fresh smoke on the VM:
+
+```bash
+cd /home/hth2/flowkit-control-demo/control
+CONTROL_PROFILE_FILE=./host-demo.env POSTGRES_DSN='postgresql://...' ./scripts/public-http-fresh-smoke.sh
+```
+
+3. Run the full local-to-remote proof wrapper from Windows:
+
+```powershell
+cd F:\vm201 Coolify\flowkit\docs\deployment-kit\control\scripts
+powershell -NoProfile -ExecutionPolicy Bypass -File .\public-http-proof.ps1 run
+```
+
+Operator notes:
+
+- leave `SOURCE_TITLE` unset if you want the smoke helpers to auto-generate a timestamped title
+- park the lab again after any live proof to avoid unnecessary credit spend
+
 Important:
 
 - production recommendation is still `1 lane per worker VM`
