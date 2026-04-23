@@ -1216,3 +1216,106 @@ Current storage end state:
 - control DB no longer contains stale artifact rows pointing at:
   - `file://...`
   - `s3://dgt-audio/...`
+
+## April 23, 2026 update: public HTTP artifact URLs are now live
+
+The next follow-up goal was to stop returning `s3://...` URIs and move artifact
+rows to public HTTP URLs.
+
+### Public bucket access
+
+Bucket:
+
+- `veo3`
+
+Managed public domain:
+
+- `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev`
+
+What happened:
+
+- Cloudflare MCP could read bucket domain state but failed on the write step with
+  authentication error
+- local `wrangler` CLI was then used with:
+  - `CLOUDFLARE_ACCOUNT_ID=75adc0ed2db47e1731c8f6105492cc0b`
+- `wrangler r2 bucket dev-url enable veo3` succeeded
+- direct public HTTP checks then returned `200` for existing `veo3` objects
+
+### Live env updates
+
+Both live worker env files were updated to include:
+
+- `R2_PUBLIC_BASE=https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev`
+
+Updated files:
+
+- `/home/hth2/flowkit-worker-demo/env/lane.env`
+- `/home/hth2/flowkit-worker-demo-lane-02/env/lane.env`
+
+### Important live sync note
+
+The repo already had `R2_PUBLIC_BASE` support, but the live worker roots on VM
+were still on an older copy of:
+
+- `fk_worker/config.py`
+- `fk_worker/upload.py`
+
+Those files were synced from the repo deployment kit into both live worker
+roots:
+
+- `/home/hth2/flowkit-worker-demo/fk_worker/`
+- `/home/hth2/flowkit-worker-demo-lane-02/fk_worker/`
+
+This was required so live worker uploads would actually emit HTTP URLs instead
+of `s3://...`.
+
+### Zero-credit migration to public URLs
+
+Three completed test chapters were normalized from `s3://veo3/...` into public
+HTTP URLs:
+
+1. `2d203365-f19c-47f1-b7ea-ddf20674df46`
+   - `control_create_only_smoke_lane_01_2026_04_22_chapter_01`
+2. `18f6fb64-98ec-4d54-8ed9-64dcd5de1b43`
+   - `lane_02_single_chapter_smoke_2026_04_22_09_02_chapter_01`
+3. `383145d8-7fdf-47bb-af29-f4a967ce9f95`
+   - `control_create_only_smoke_2026_04_22_chapter_01`
+
+Migration method:
+
+- zero-credit direct replay via `handle_upload_artifacts()`
+- forced:
+  - `ALLOW_LOCAL_ARTIFACT_FALLBACK=0`
+- then deleted stale `s3://veo3/...` rows for the same chapters after public
+  URL verification passed
+
+Observed result:
+
+- lane-01 chapter now remains as:
+  - `chapter_final -> https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/9765a16e_f869_4142_abda_53e85996a15e/control_create_only_smoke_lane_01_2026_04_22_chapter_01/final.mp4`
+- lane-02 older smoke chapter now remains as:
+  - `chapter_final -> https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/9e134864_af02_47c9_9b6b_cdabbf67bb14/lane_02_single_chapter_smoke_2026_04_22_09_02_chapter_01/final.mp4`
+  - `manifest -> https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/9e134864_af02_47c9_9b6b_cdabbf67bb14/lane_02_single_chapter_smoke_2026_04_22_09_02_chapter_01/meta.json`
+- lane-02 control-routed chapter now remains as:
+  - `chapter_final -> https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/791c0c5d_48e9_4026_b460_b2f4f25e63e9/control_create_only_smoke_2026_04_22_chapter_01/final.mp4`
+  - `manifest -> https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/791c0c5d_48e9_4026_b460_b2f4f25e63e9/control_create_only_smoke_2026_04_22_chapter_01/meta.json`
+
+### Final verification
+
+Final control-DB scan returned:
+
+- no remaining artifact rows with:
+  - `storage_uri like 'file://%'`
+  - `storage_uri like 's3://dgt-audio/%'`
+  - `storage_uri like 's3://veo3/%'`
+
+Artifact rows now present for the migrated test chapters are:
+
+- public `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/...` URLs only
+
+Current end state:
+
+- live bucket remains `veo3`
+- public `r2.dev` access is enabled
+- live worker envs include `R2_PUBLIC_BASE`
+- migrated test chapter artifact rows now use public HTTP URLs, not `s3://...`
