@@ -1399,3 +1399,47 @@ Post-proof ops step:
 - remote VM control API, scheduler, and lane runners were parked again
 - lab end state after proof is intentionally back to parked to avoid further
   credit spend
+
+## April 23, 2026 tooling update: one-command fresh smoke helper now exists
+
+To avoid repeating manual API + DB polling steps, a new control helper was added
+to the repo:
+
+- `docs/deployment-kit/control/scripts/public-http-fresh-smoke.sh`
+
+Purpose:
+
+- create a tiny `1 chapter / 8 seconds / 1 scene` control-routed project
+- poll via control DB until the chapter reaches `completed` or `failed`
+- print the final artifact URLs
+
+Important current contract:
+
+- requires `POSTGRES_DSN`
+- respects `CONTROL_PROFILE_FILE` for `CONTROL_API_URL`
+- supports `DRY_RUN=1`
+
+Live proof on `hth2-box`:
+
+- the helper script was copied to:
+  - `/home/hth2/flowkit-control-demo/control/scripts/public-http-fresh-smoke.sh`
+- it was executed on the VM with:
+  - `CONTROL_PROFILE_FILE=/home/hth2/flowkit-control-demo/control/host-demo.env`
+  - `POSTGRES_DSN` loaded from lane env
+
+Observed result:
+
+- helper-created project id:
+  - `319e34d6-f726-40b7-bb34-730be249c449`
+- helper-created chapter id:
+  - `81359efb-246b-4c98-b7b9-e1cea2b16dca`
+- chapter completed successfully
+- all chapter jobs completed
+- returned artifact URLs were public HTTP URLs:
+  - `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/319e34d6_f726_40b7_bb34_730be249c449/fresh_smoke_helper_2026_04_23_11_02_chapter_01/final.mp4`
+  - `https://pub-21eb0ffd95134c5a9fda96c012571194.r2.dev/projects/319e34d6_f726_40b7_bb34_730be249c449/fresh_smoke_helper_2026_04_23_11_02_chapter_01/meta.json`
+
+Meaning:
+
+- the fresh public-HTTP proof is now available as a reusable script, not only as
+  an ad-hoc operator sequence

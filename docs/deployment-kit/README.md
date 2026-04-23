@@ -16,6 +16,7 @@ Contents:
   - Postgres schema
   - Redis job contract
   - service descriptions
+  - fresh public-http smoke helper
 - `worker/`
   - lane directory layout
   - systemd units

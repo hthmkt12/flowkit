@@ -82,6 +82,72 @@ def test_create_demo_project_script_help():
     assert "CHAPTER_COUNT" in result.stdout
 
 
+def test_public_http_fresh_smoke_script_help():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "public-http-fresh-smoke.sh"
+
+    result = subprocess.run(
+        ["bash", _wsl_path(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "POSTGRES_DSN" in result.stdout
+    assert "TARGET_DURATION_SECONDS" in result.stdout
+    assert "WAIT_TIMEOUT_SECONDS" in result.stdout
+
+
+def test_public_http_fresh_smoke_script_dry_run_loads_profile():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "public-http-fresh-smoke.sh"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        profile = root / "host-demo.env"
+        profile.write_text(
+            "\n".join(
+                [
+                    "CONTROL_API_URL=http://127.0.0.1:18080",
+                    "PYTHON_BIN=python3",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                " ".join(
+                    [
+                        f"CONTROL_PROFILE_FILE='{_wsl_path(profile)}'",
+                        "POSTGRES_DSN='postgresql://fk:test@127.0.0.1:5432/fk_control'",
+                        "SOURCE_TITLE='Fresh Smoke Title'",
+                        "SOURCE_BRIEF='Fresh smoke brief'",
+                        "TARGET_DURATION_SECONDS='8'",
+                        "CHAPTER_COUNT='1'",
+                        "MATERIAL_ID='realistic'",
+                        "DRY_RUN='1'",
+                        f"'{_wsl_path(script)}'",
+                    ]
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert '"status": "dry_run"' in result.stdout
+    assert '"control_api_url": "http://127.0.0.1:18080"' in result.stdout
+    assert '"target_duration_seconds": 8' in result.stdout
+    assert '"chapter_count": 1' in result.stdout
+    assert '"material_id": "realistic"' in result.stdout
+    assert '"postgres_dsn_present": true' in result.stdout
+
+
 def test_start_control_api_script_help():
     script = Path(__file__).resolve().parents[1] / "scripts" / "start-control-api.sh"
 
