@@ -1,240 +1,255 @@
-"""Flow Kit — FastAPI + WebSocket server entry point."""
+"""FBKit — FastAPI entry point + WebSocket server.
+
+Replaces FlowKit main.py. Handles:
+1. HTTP REST API on port 8100
+2. WebSocket bridge on port 9222 (extension ↔ agent)
+3. Dashboard WebSocket for real-time updates
+4. Task worker lifecycle
+"""
 import asyncio
 import json
+import secrets
 import logging
 import signal
-from contextlib import asynccontextmanager
+import sys
 
+import uvicorn
 import websockets
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 
-from agent.config import API_HOST, API_PORT, WS_HOST, WS_PORT
+from agent.config import API_HOST, API_PORT, WS_AUTH_ENABLED, WS_API_KEY, WS_HOST, WS_PORT
 from agent.db.schema import init_db, close_db
-from agent.api.characters import router as characters_router
-from agent.api.projects import router as projects_router
-from agent.api.videos import router as videos_router
-from agent.api.scenes import router as scenes_router
-from agent.api.requests import router as requests_router
-from agent.api.flow import router as flow_router
-from agent.api.reviews import router as reviews_router
-from agent.api.tts import router as tts_router
-from agent.api.materials import router as materials_router
-from agent.api.music import router as music_router
-from agent.api.models import router as models_router
-from agent.api.active_project import router as active_project_router
-from agent.worker.processor import get_worker_controller
-from agent.services.flow_client import get_flow_client
+from agent.services.fb_client import get_fb_client
 from agent.services.event_bus import event_bus
-from agent.sdk import init_sdk
+from agent.worker.processor import get_worker_controller
+from agent.services.scheduler import get_scheduler
+from agent.services.auto_seed import get_auto_seeder
+from agent.services.spy_ads import get_spy_ads
+from agent.services.notifier import get_notifier
+from agent.services.auth import require_api_key
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-logger = logging.getLogger(__name__)
-
-
-# ─── WebSocket Server for Extension ─────────────────────────
-
-async def ws_handler(websocket):
-    """Handle a Chrome extension WebSocket connection."""
-    client = get_flow_client()
-    client.set_extension(websocket)
-    logger.info("Extension connected from %s", websocket.remote_address)
-
-    # Send callback secret so extension can authenticate HTTP callbacks
-    await websocket.send(json.dumps({"type": "callback_secret", "secret": _CALLBACK_SECRET}))
-    # If the agent already knows a Flow token, seed it into the reconnecting extension.
-    if getattr(client, "_flow_key", None):
-        await websocket.send(json.dumps({"type": "seed_token", "flowKey": client._flow_key}))
-
-    try:
-        async for raw in websocket:
-            try:
-                data = json.loads(raw)
-                await client.handle_message(data)
-            except json.JSONDecodeError:
-                logger.warning("Invalid JSON from extension")
-            except Exception as e:
-                logger.exception("Error handling extension message: %s", e)
-    except websockets.ConnectionClosed:
-        pass
-    finally:
-        client.clear_extension()
-        logger.info("Extension disconnected")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("fbkit")
 
 
-async def run_ws_server():
-    """Run WebSocket server for extension connections."""
-    async with websockets.serve(ws_handler, WS_HOST, WS_PORT):
-        logger.info("WebSocket server listening on ws://%s:%d", WS_HOST, WS_PORT)
-        await asyncio.Future()  # run forever
-
-
-# ─── FastAPI App ─────────────────────────────────────────────
+# ─── FastAPI Lifespan ────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup
     await init_db()
+    logger.info("FBKit Agent starting on %s:%d", API_HOST, API_PORT)
 
-    # Load custom materials from DB into in-memory registry
-    from agent.db.crud import list_materials as db_list_materials
-    from agent.materials import register_material, _BUILTIN_IDS
-    try:
-        custom_materials = await db_list_materials()
-        for m in custom_materials:
-            if m["id"] not in _BUILTIN_IDS:
-                register_material(m)
-                logger.info("Loaded custom material from DB: %s", m["id"])
-    except Exception as e:
-        logger.warning("Failed to load custom materials: %s", e)
+    # Seed default strategies (AutoBrowse pattern — baseline knowledge)
+    from agent.db.seed_strategies import seed_default_strategies
+    await seed_default_strategies()
 
-    ops = init_sdk(get_flow_client())
-    logger.info("SDK initialized (OperationService ready)")
-    logger.info("Flow Kit starting on %s:%d", API_HOST, API_PORT)
+    # Start worker
+    worker = get_worker_controller()
+    worker_task = asyncio.create_task(worker.start())
 
-    controller = get_worker_controller()
+    # Start scheduler (handles timed posts/messages)
+    scheduler = get_scheduler()
+    scheduler_task = asyncio.create_task(scheduler.start())
 
-    # SIGTERM handler for graceful shutdown
-    loop = asyncio.get_event_loop()
-    loop.add_signal_handler(signal.SIGTERM, controller.request_shutdown)
+    # Start auto-seeder (engagement campaigns)
+    seeder = get_auto_seeder()
+    seeder_task = asyncio.create_task(seeder.start())
 
-    # Start background tasks
-    ws_task = asyncio.create_task(run_ws_server())
-    worker_task = asyncio.create_task(controller.start())
-    logger.info("WS server + worker started")
+    # Start spy ads monitor
+    spy = get_spy_ads()
+    spy_task = asyncio.create_task(spy.start())
+
+    # Start Telegram notifier
+    notifier = get_notifier()
+    notifier_task = asyncio.create_task(notifier.start())
+
+    # Start WebSocket server for extension
+    ws_server = await websockets.serve(
+        _handle_extension_ws, WS_HOST, WS_PORT,
+        ping_interval=30, ping_timeout=10,
+    )
+    logger.info("Extension WebSocket server on ws://%s:%d", WS_HOST, WS_PORT)
 
     yield
 
-    controller.request_shutdown()
-    await controller.drain()
-    ws_task.cancel()
-    worker_task.cancel()
+    # Shutdown
+    logger.info("Shutting down...")
+    spy.request_shutdown()
+    seeder.request_shutdown()
+    scheduler.request_shutdown()
+    worker.request_shutdown()
+    await worker.drain()
+    ws_server.close()
+    await ws_server.wait_closed()
     await close_db()
-    logger.info("Flow Kit stopped")
+    logger.info("FBKit Agent stopped")
 
 
-app = FastAPI(title="Flow Kit", version="0.2.0", lifespan=lifespan)
+# ─── Extension WebSocket Handler ─────────────────────────────
+
+async def _handle_extension_ws(ws, path=None):
+    """Handle WebSocket connection from Chrome extension."""
+    if WS_AUTH_ENABLED:
+        request_path = path or getattr(ws, "path", "") or ""
+        query = request_path.split("?", 1)[1] if "?" in request_path else ""
+        params = {}
+        for pair in query.split("&"):
+            if not pair:
+                continue
+            k, _, v = pair.partition("=")
+            params[k] = v
+
+        ws_key = params.get("api_key") or params.get("token")
+        if not ws_key or not secrets.compare_digest(ws_key, WS_API_KEY):
+            logger.warning("Extension WS unauthorized from %s", ws.remote_address)
+            await ws.close(code=4401, reason="Unauthorized")
+            return
+
+    client = get_fb_client()
+    # Register session (fb_uid filled in after extension_ready)
+    client.set_extension(ws)
+    await event_bus.emit("extension_connected", client.ws_stats)
+    logger.info("Extension WebSocket connected from %s", ws.remote_address)
+
+    try:
+        async for raw in ws:
+            try:
+                data = json.loads(raw)
+                # Pass ws so handle_message can look up the right session
+                await client.handle_message(ws, data)
+            except json.JSONDecodeError:
+                logger.warning("Invalid JSON from extension: %s", raw[:100])
+    except websockets.ConnectionClosed:
+        pass
+    finally:
+        client.clear_extension(ws)
+        await event_bus.emit("extension_disconnected", client.ws_stats)
+        logger.info("Extension WebSocket disconnected")
+
+
+# ─── FastAPI App ──────────────────────────────────────────────
+
+app = FastAPI(
+    title="FBKit Agent",
+    description="Facebook Automation Agent — tương tác như người dùng thật",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(characters_router, prefix="/api")
-app.include_router(projects_router, prefix="/api")
-app.include_router(videos_router, prefix="/api")
-app.include_router(scenes_router, prefix="/api")
-app.include_router(requests_router, prefix="/api")
-app.include_router(flow_router, prefix="/api")
-app.include_router(reviews_router, prefix="/api")
-app.include_router(tts_router, prefix="/api")
-app.include_router(materials_router, prefix="/api")
-app.include_router(music_router, prefix="/api")
-app.include_router(models_router)
-app.include_router(active_project_router)
+
+# ─── Import & Register Routers ──────────────────────────────
+
+from agent.api.accounts import router as accounts_router
+from agent.api.tasks import router as tasks_router
+from agent.api.posts import router as posts_router
+from agent.api.messages import router as messages_router
+from agent.api.groups import router as groups_router
+from agent.api.seeding import router as seeding_router
+from agent.api.spy import router as spy_router
+from agent.api.strategies import router as strategies_router
+
+api_dependencies = [Depends(require_api_key)]
+
+app.include_router(accounts_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(tasks_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(posts_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(messages_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(groups_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(seeding_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(spy_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(strategies_router, prefix="/api", dependencies=api_dependencies)
 
 
-import secrets as _secrets
-_CALLBACK_SECRET = _secrets.token_urlsafe(32)
+# ─── Root & Status ───────────────────────────────────────────
 
-
-@app.post("/api/ext/callback")
-async def ext_callback(request: Request):
-    """HTTP callback for extension to deliver API responses.
-
-    Replaces ws.send() for response delivery — immune to WS disconnect.
-    Extension POSTs {id, status, data, error} here instead of sending via WS.
-    Requires X-Callback-Secret header matching the secret sent to extension on WS connect.
-    """
-    data = await request.json()
-    client = get_flow_client()
-    req_id = data.get("id")
-    logger.info("ext/callback: id=%s pending=%d match=%s",
-                str(req_id)[:8] if req_id else "none",
-                len(client._pending),
-                "yes" if req_id and req_id in client._pending else "no")
-    if req_id and req_id in client._pending:
-        future = client._pending[req_id]
-        try:
-            future.set_result(data)
-        except asyncio.InvalidStateError:
-            pass
-        return {"ok": True}
-    return {"ok": False, "reason": "no matching pending request"}
-
-
-@app.get("/health")
-async def health():
-    client = get_flow_client()
+@app.get("/")
+async def root():
+    client = get_fb_client()
+    worker = get_worker_controller()
     return {
-        "status": "ok",
-        "version": "0.2.0",
-        "extension_connected": client.connected,
-        "ws": client.ws_stats,
+        "name": "FBKit Agent",
+        "version": "1.0.0",
+        "extension": client.ws_stats,
+        "worker": {
+            "active_tasks": worker.active_count,
+        },
     }
 
 
-# ─── Dashboard WebSocket ──────────────────────────────────────
+@app.get("/api/status")
+async def get_status(_: None = Depends(require_api_key)):
+    client = get_fb_client()
+    worker = get_worker_controller()
+    scheduler = get_scheduler()
+    seeder = get_auto_seeder()
+    spy = get_spy_ads()
+    notifier = get_notifier()
+    from agent.services.human_delay import get_session_manager
+    session = get_session_manager()
+    from agent.db import crud
+    task_stats = await crud.get_task_stats()
+    return {
+        "extension": client.ws_stats,
+        "worker": {"active_tasks": worker.active_count},
+        "scheduler": scheduler.stats,
+        "seeder": seeder.stats,
+        "spy_ads": spy.stats,
+        "notifier": notifier.stats,
+        "session": session.session_info,
+        "tasks": task_stats,
+    }
+
+
+# ─── Dashboard WebSocket ────────────────────────────────────
 
 @app.websocket("/ws/dashboard")
-async def dashboard_ws(websocket: WebSocket):
-    """WebSocket endpoint for dashboard clients (Chrome extension side panel)."""
-    # Reject cross-origin connections (only allow localhost)
-    origin = (websocket.headers.get("origin") or "").lower()
-    if origin and not any(origin.startswith(p) for p in (
-        "http://127.0.0.1", "http://localhost", "chrome-extension://",
-    )):
-        await websocket.close(code=4003, reason="Origin not allowed")
-        return
-    await websocket.accept()
+async def dashboard_ws(ws: WebSocket):
+    """Real-time updates for dashboard UI."""
+    if WS_AUTH_ENABLED:
+        token = ws.query_params.get("api_key") or ws.query_params.get("token")
+        if not token or not secrets.compare_digest(token, WS_API_KEY):
+            await ws.close(code=http_status.WS_1008_POLICY_VIOLATION)
+            return
 
-    q = event_bus.subscribe()
+    await ws.accept()
+    queue = event_bus.subscribe()
     try:
-        # Send initial snapshot
-        client = get_flow_client()
-        controller = get_worker_controller()
-        from agent.db import crud
-        pending_requests = await crud.list_requests(status="PENDING")
-        processing_requests = await crud.list_requests(status="PROCESSING")
-        snapshot = {
-            "type": "snapshot",
-            "health": {
-                "status": "ok",
-                "extension_connected": client.connected,
-            },
-            "requests": pending_requests + processing_requests,
-            "worker": {
-                "active": controller.active_count,
-                "slots": max(0, 5 - controller.active_count),
-            },
-        }
-        await websocket.send_text(json.dumps(snapshot))
-
-        # Forward events from event_bus to this client
         while True:
-            try:
-                msg = await asyncio.wait_for(q.get(), timeout=30.0)
-                await websocket.send_text(msg)
-            except asyncio.TimeoutError:
-                # Send keepalive ping
-                await websocket.send_text(json.dumps({"type": "ping"}))
+            msg = await queue.get()
+            await ws.send_text(msg)
     except WebSocketDisconnect:
         pass
-    except Exception as e:
-        logger.debug("Dashboard WS client disconnected: %s", e)
     finally:
-        event_bus.unsubscribe(q)
+        event_bus.unsubscribe(queue)
 
 
-if __name__ == "__main__":
-    import os
-    import uvicorn
-    reload_enabled = os.environ.get("GLA_RELOAD", "0") == "1"
+# ─── Entrypoint ──────────────────────────────────────────────
+
+def main():
     uvicorn.run(
         "agent.main:app",
         host=API_HOST,
         port=API_PORT,
-        reload=reload_enabled,
-        reload_excludes=["*.db", "*.db-wal", "*.db-shm", "output/*"],
+        reload=False,
+        log_level="info",
     )
+
+
+if __name__ == "__main__":
+    main()

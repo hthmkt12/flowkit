@@ -1,51 +1,40 @@
 {
   "manifest_version": 3,
-  "name": "Flow Kit",
-  "version": "0.2.0",
-  "description": "Local agent bridge for Google Flow API — captures tokens, solves reCAPTCHA, proxies API calls",
-  "flowkit": {
-    "agent_ws_url": "ws://127.0.0.1:9222",
-    "callback_base_url": "http://127.0.0.1:8100"
-  },
-  "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest", "sidePanel"],
+  "name": "FBKit - Facebook Automation",
+  "version": "1.0.0",
+  "description": "Facebook automation extension — works with FBKit Agent",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "alarms",
+    "scripting",
+    "debugger",
+    "cookies"
+  ],
   "host_permissions": [
-    "https://labs.google/*",
-    "https://aisandbox-pa.googleapis.com/*",
+    "https://www.facebook.com/*",
+    "https://facebook.com/*",
+    "https://web.facebook.com/*",
+    "https://mbasic.facebook.com/*",
+    "https://m.facebook.com/*",
     "http://127.0.0.1:8100/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "content_scripts": [
     {
       "matches": [
-        "https://labs.google/fx/tools/flow*",
-        "https://labs.google/fx/*/tools/flow*"
+        "https://www.facebook.com/*",
+        "https://web.facebook.com/*",
+        "https://facebook.com/*"
       ],
-      "js": ["content.js"],
-      "run_at": "document_start"
+      "js": ["content-fb.js"],
+      "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": ["injected.js"],
-      "matches": ["https://labs.google/*"]
-    }
-  ],
-  "declarative_net_request": {
-    "rule_resources": [
-      {
-        "id": "referer_rules",
-        "enabled": true,
-        "path": "rules.json"
-      }
-    ]
-  },
-  "side_panel": {
-    "default_path": "side_panel.html"
-  },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Flow Kit"
+    "default_popup": "popup.html"
   }
 }

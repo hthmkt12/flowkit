@@ -1,123 +1,76 @@
-"""Configuration constants."""
-import json
+"""FBKit — Configuration."""
 import os
-from pathlib import Path
 
-# ─── Paths ───────────────────────────────────────────────────
-BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent))
-DB_PATH = BASE_DIR / "flow_agent.db"
 
-# ─── API Server ──────────────────────────────────────────────
+def _is_truthy(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ─── Server ──────────────────────────────────────────────────
 API_HOST = os.environ.get("API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("API_PORT", "8100"))
-
-# ─── WebSocket Server (extension connects here) ─────────────
 WS_HOST = os.environ.get("WS_HOST", "127.0.0.1")
 WS_PORT = int(os.environ.get("WS_PORT", "9222"))
 
-# ─── Google Flow API ────────────────────────────────────────
-GOOGLE_FLOW_API = "https://aisandbox-pa.googleapis.com"
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY")
-RECAPTCHA_SITE_KEY = os.environ.get("RECAPTCHA_SITE_KEY", "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV")
+# ─── Security / Auth ─────────────────────────────────────────
+API_AUTH_ENABLED = _is_truthy(os.environ.get("API_AUTH_ENABLED"), default=False)
+API_KEY = os.environ.get("API_KEY", "")
+
+# Extension WS auth (supports separate rotation if needed)
+WS_AUTH_ENABLED = _is_truthy(os.environ.get("WS_AUTH_ENABLED"), default=API_AUTH_ENABLED)
+WS_API_KEY = os.environ.get("WS_API_KEY", API_KEY)
+
+# ─── Database & Storage ──────────────────────────────────────
+DB_PATH = os.environ.get("DB_PATH", "fbkit.db")
+DATA_ENCRYPTION_KEY = os.environ.get("DATA_ENCRYPTION_KEY", API_KEY)
+MEDIA_DIR = os.environ.get("MEDIA_DIR", "media")
 
 # ─── Worker ──────────────────────────────────────────────────
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
-VIDEO_POLL_INTERVAL = int(os.environ.get("VIDEO_POLL_INTERVAL", "10"))  # polling interval for video/upscale status
-MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "5"))
-VIDEO_POLL_TIMEOUT = int(os.environ.get("VIDEO_POLL_TIMEOUT", "420"))
-API_COOLDOWN = int(os.environ.get("API_COOLDOWN", "10"))  # seconds between API calls (anti-spam)
-MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "5"))  # Google Flow max parallel requests
-STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600"))  # 10 min
+MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
+MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "1"))  # Sequential by default
 
-# ─── Model Keys (loaded from models.json for easy updates) ──
-_MODELS_FILE = Path(__file__).parent / "models.json"
-with open(_MODELS_FILE) as _f:
-    _MODELS = json.load(_f)
+# ─── Safety Gate ──────────────────────────────────────────────
+# Defaults protect personal accounts from accidental live mutations.
+LIVE_ACTIONS_ENABLED = _is_truthy(os.environ.get("LIVE_ACTIONS_ENABLED"), default=False)
+DRY_RUN_DEFAULT = _is_truthy(os.environ.get("DRY_RUN_DEFAULT"), default=True)
+APPROVAL_REQUIRED = _is_truthy(os.environ.get("APPROVAL_REQUIRED"), default=True)
 
-VIDEO_MODELS = _MODELS["video_models"]
-UPSCALE_MODELS = _MODELS["upscale_models"]
-IMAGE_MODELS = _MODELS["image_models"]
+# ─── Scheduler ───────────────────────────────────────────────
+SCHEDULER_CHECK_INTERVAL = int(os.environ.get("SCHEDULER_CHECK_INTERVAL", "30"))  # seconds
 
-# ─── API Endpoints ───────────────────────────────────────────
-ENDPOINTS = {
-    "generate_images": "/v1/projects/{project_id}/flowMedia:batchGenerateImages",
-    "generate_video": "/v1/video:batchAsyncGenerateVideoStartImage",
-    "generate_video_start_end": "/v1/video:batchAsyncGenerateVideoStartAndEndImage",
-    "generate_video_references": "/v1/video:batchAsyncGenerateVideoReferenceImages",
-    "upscale_video": "/v1/video:batchAsyncGenerateVideoUpsampleVideo",
-    "upscale_image": "/v1/flow/upsampleImage",
-    "upload_image": "/v1/flow/uploadImage",
-    "check_video_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
-    "get_credits": "/v1/credits",
-    "get_media": "/v1/media/{media_id}",
-}
+# ─── Anti-Detection Delays (seconds) ────────────────────────
+# Minimum and maximum random delays between actions
+ACTION_DELAY_MIN = float(os.environ.get("ACTION_DELAY_MIN", "2.0"))
+ACTION_DELAY_MAX = float(os.environ.get("ACTION_DELAY_MAX", "8.0"))
 
-# ─── Output Directories ─────────────────────────────────────
-OUTPUT_DIR = BASE_DIR / "output"
-SHARED_OUTPUT_DIR = OUTPUT_DIR / "_shared"
-TTS_TEMPLATES_DIR = SHARED_OUTPUT_DIR / "tts_templates"
-MUSIC_OUTPUT_DIR = SHARED_OUTPUT_DIR / "music"
+# Typing simulation delay per character (milliseconds)
+TYPING_DELAY_MIN = int(os.environ.get("TYPING_DELAY_MIN", "40"))
+TYPING_DELAY_MAX = int(os.environ.get("TYPING_DELAY_MAX", "150"))
 
-# ─── TTS (OmniVoice) ─────────────────────────────────────────
-TTS_MODEL = os.environ.get("TTS_MODEL", "k2-fsa/OmniVoice")
-TTS_DEVICE = os.environ.get("TTS_DEVICE", "cpu")  # MPS produces gibberish; CPU+fp32 works
-TTS_SAMPLE_RATE = int(os.environ.get("TTS_SAMPLE_RATE", "24000"))
+# ─── Rate Limits (per account per day) ───────────────────────
+RATE_LIMIT_POSTS_PER_DAY = int(os.environ.get("RATE_LIMIT_POSTS", "20"))
+RATE_LIMIT_MESSAGES_PER_DAY = int(os.environ.get("RATE_LIMIT_MESSAGES", "50"))
+RATE_LIMIT_LIKES_PER_DAY = int(os.environ.get("RATE_LIMIT_LIKES", "100"))
+RATE_LIMIT_COMMENTS_PER_DAY = int(os.environ.get("RATE_LIMIT_COMMENTS", "50"))
+RATE_LIMIT_FRIEND_REQUESTS_PER_DAY = int(os.environ.get("RATE_LIMIT_FRIENDS", "20"))
 
-# ─── Review / Claude Vision ──────────────────────────────────
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-REVIEW_MODEL = os.environ.get("REVIEW_MODEL", "claude-haiku-4-5-20251001")
-REVIEW_FPS_LIGHT = float(os.environ.get("REVIEW_FPS_LIGHT", "4"))
-REVIEW_FPS_DEEP = float(os.environ.get("REVIEW_FPS_DEEP", "8"))
-REVIEW_MAX_FRAMES = int(os.environ.get("REVIEW_MAX_FRAMES", "64"))
+# ─── Session Limits ─────────────────────────────────────────
+SESSION_ACTIVE_MIN = int(os.environ.get("SESSION_ACTIVE_MIN", "60"))  # minutes
+SESSION_ACTIVE_MAX = int(os.environ.get("SESSION_ACTIVE_MAX", "180"))
+SESSION_BREAK_MIN = int(os.environ.get("SESSION_BREAK_MIN", "15"))  # minutes
+SESSION_BREAK_MAX = int(os.environ.get("SESSION_BREAK_MAX", "45"))
 
-# ─── Suno (Music Generation) — sunoapi.org ──────────────────
-def _load_suno_key() -> str:
-    """Load Suno API key: env var first, then channel_rules.json fallback."""
-    key = os.environ.get("SUNO_API_KEY", "")
-    if key:
-        return key
-    channels_dir = BASE_DIR / "youtube" / "channels"
-    if channels_dir.exists():
-        for rules_file in channels_dir.glob("*/channel_rules.json"):
-            try:
-                rules = json.loads(rules_file.read_text())
-                key = rules.get("api_keys", {}).get("suno", "")
-                if key:
-                    return key
-            except (json.JSONDecodeError, OSError):
-                continue
-    return ""
+# ─── Facebook URLs ───────────────────────────────────────────
+FB_BASE_URL = "https://www.facebook.com"
+FB_MESSENGER_URL = "https://www.facebook.com/messages"
+FB_MBASIC_URL = "https://mbasic.facebook.com"  # Fallback for simpler interactions
 
-SUNO_API_KEY = _load_suno_key()
-SUNO_BASE_URL = os.environ.get("SUNO_BASE_URL", "https://api.sunoapi.org")
-SUNO_MODEL = os.environ.get("SUNO_MODEL", "V4")
-SUNO_CALLBACK_URL = os.environ.get("SUNO_CALLBACK_URL", f"http://{API_HOST}:{API_PORT}/api/music/callback")
-SUNO_POLL_INTERVAL = int(os.environ.get("SUNO_POLL_INTERVAL", "5"))
-SUNO_POLL_TIMEOUT = int(os.environ.get("SUNO_POLL_TIMEOUT", "600"))
+# ─── Telegram Notifications ─────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# ─── Header Randomization Pools ─────────────────────────────
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36",
-]
-
-CHROME_VERSIONS = [
-    '"Google Chrome";v="109", "Chromium";v="109"',
-    '"Google Chrome";v="110", "Chromium";v="110"',
-    '"Google Chrome";v="111", "Chromium";v="111"',
-    '"Google Chrome";v="113", "Not-A.Brand";v="24"',
-    '"Google Chrome";v="120", "Not-A.Brand";v="24"',
-    '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
-]
-
-BROWSER_VALIDATIONS = [
-    "SgDQo8mvrGRdD61Pwo8wyWVgYgs=",
-]
-
-CLIENT_DATA = [
-    "CKi1yQEIh7bJAQiktskBCKmdygEIvorLAQiUocsBCIagzQEYv6nKARjRp88BGKqwzwE=",
-]
+# ─── Spy Ads ─────────────────────────────────────────────────
+SPY_ADS_CHECK_INTERVAL = int(os.environ.get("SPY_ADS_CHECK_INTERVAL", "3600"))  # seconds

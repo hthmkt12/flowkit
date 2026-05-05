@@ -130,6 +130,32 @@ Operator notes:
 - leave `SOURCE_TITLE` unset if you want the smoke helpers to auto-generate a timestamped title
 - park the lab again after any live proof to avoid unnecessary credit spend
 
+## Same-VM Troubleshooting
+
+- `tailscale` logged out or `hth2-box` unreachable:
+  - run `tailscale status` on the local Windows machine
+  - if needed, run `tailscale login` again before restarting tunnels or Chrome
+  - only continue after `hth2-box` is reachable again on the tailnet
+
+- `extension_connected=false` on lane health:
+  - reopen the correct local Chrome profile and unpacked extension for that lane
+  - re-check `http://127.0.0.1:8100/health` for `lane-01` or `http://127.0.0.1:8110/health` for `lane-02`
+  - if branded Chrome ignores `--load-extension`, relaunch with:
+    - `--disable-features=DisableLoadExtensionCommandLineSwitch,DisableDisableExtensionsExceptCommandLineSwitch`
+
+- `dispatchable_reason=flow_auth_invalid`:
+  - the lane runtime is up, but the Google account session is stale
+  - refresh Google auth in the correct local Chrome profile for that lane
+  - verify `/api/flow/credits` returns real credits, not an embedded `401` error payload
+
+- lane does not return to `idle`:
+  - check local status with `two-lane-local-lab.ps1 status`
+  - check remote status with `two-lane-lab-service.sh status`
+  - expected ready shape is:
+    - `runner_ready=true`
+    - `dispatchable_reason=ready`
+    - `status=idle`
+
 Important:
 
 - production recommendation is still `1 lane per worker VM`

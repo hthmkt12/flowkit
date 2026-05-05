@@ -12,6 +12,10 @@ export async function fetchAPI<T>(path: string, options?: RequestInit): Promise<
   return res.json()
 }
 
-export async function patchAPI<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  return fetchAPI<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
+export async function postAPI<T>(path: string, body?: unknown): Promise<T> {
+  return fetchAPI<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined })
+}
+
+export async function deleteAPI<T>(path: string): Promise<T> {
+  return fetchAPI<T>(path, { method: 'DELETE' })
 }

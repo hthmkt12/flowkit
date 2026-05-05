@@ -1,16 +1,20 @@
 import { BrowserRouter, NavLink, Routes, Route, useLocation } from 'react-router-dom'
-import { LayoutDashboard, FolderOpen, ScrollText, Film } from 'lucide-react'
+import { LayoutDashboard, Zap, Eye, ListChecks, ScrollText, Users, Wifi, WifiOff } from 'lucide-react'
 import { useWebSocket } from './api/useWebSocket'
 import DashboardPage from './pages/DashboardPage'
-import ProjectsPage from './pages/ProjectsPage'
+import AccountsPage from './pages/AccountsPage'
+import SeedingPage from './pages/SeedingPage'
+import SpyPage from './pages/SpyPage'
+import TasksPage from './pages/TasksPage'
 import LogsPage from './pages/LogsPage'
-import GalleryPage from './pages/GalleryPage'
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', exact: true },
-  { to: '/projects', icon: FolderOpen, label: 'Projects', exact: false },
+  { to: '/accounts', icon: Users, label: 'Accounts', exact: false },
+  { to: '/tasks', icon: ListChecks, label: 'Tasks', exact: false },
+  { to: '/seeding', icon: Zap, label: 'Seeding', exact: false },
+  { to: '/spy', icon: Eye, label: 'Spy Ads', exact: false },
   { to: '/logs', icon: ScrollText, label: 'Logs', exact: false },
-  { to: '/gallery', icon: Film, label: 'Gallery', exact: false },
 ]
 
 function PageTitle() {
@@ -26,10 +30,13 @@ function Layout() {
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
       {/* Left sidebar */}
       <aside className="w-48 flex-shrink-0 flex flex-col border-r" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <div className="px-4 py-4 text-xs font-bold tracking-widest uppercase" style={{ color: 'var(--muted)' }}>
-          Flow Agent
+        <div className="px-4 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--accent)' }}>
+            FBKit
+          </div>
+          <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>Flow Agent</div>
         </div>
-        <nav className="flex flex-col gap-1 px-2">
+        <nav className="flex flex-col gap-1 px-2 py-3" style={{ flex: 1 }}>
           {NAV.map(({ to, icon: Icon, label, exact }) => (
             <NavLink
               key={to}
@@ -37,9 +44,7 @@ function Layout() {
               end={exact}
               className={({ isActive }) =>
                 `flex items-center gap-2 px-3 py-2 rounded text-xs transition-colors ${
-                  isActive
-                    ? 'font-semibold'
-                    : 'hover:opacity-80'
+                  isActive ? 'font-semibold' : 'hover:opacity-80'
                 }`
               }
               style={({ isActive }) => ({
@@ -52,6 +57,16 @@ function Layout() {
             </NavLink>
           ))}
         </nav>
+
+        {/* Connection status at bottom */}
+        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {isConnected
+            ? <Wifi size={11} color="var(--green)" />
+            : <WifiOff size={11} color="var(--red)" />}
+          <span style={{ fontSize: '10px', color: isConnected ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+            {isConnected ? 'Connected' : 'Offline'}
+          </span>
+        </div>
       </aside>
 
       {/* Main area */}
@@ -61,14 +76,8 @@ function Layout() {
           <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
             <PageTitle />
           </span>
-          <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--muted)' }}>
-            <span className="flex items-center gap-1.5">
-              <span
-                className="inline-block w-2 h-2 rounded-full"
-                style={{ background: isConnected ? 'var(--green)' : 'var(--red)' }}
-              />
-              {isConnected ? 'WS connected' : 'WS disconnected'}
-            </span>
+          <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+            FBKit Agent v3
           </div>
         </header>
 
@@ -76,10 +85,11 @@ function Layout() {
         <main className="flex-1 overflow-auto p-5">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/projects" element={<ProjectsPage />} />
-            <Route path="/projects/:id" element={<ProjectsPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/seeding" element={<SeedingPage />} />
+            <Route path="/spy" element={<SpyPage />} />
             <Route path="/logs" element={<LogsPage />} />
-            <Route path="/gallery" element={<GalleryPage />} />
           </Routes>
         </main>
       </div>

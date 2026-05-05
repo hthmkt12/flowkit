@@ -1,329 +1,278 @@
-"""SQLite schema — async via aiosqlite."""
-import asyncio
-import aiosqlite
+"""FBKit — SQLite schema and connection management."""
 import logging
+import aiosqlite
 from agent.config import DB_PATH
 
 logger = logging.getLogger(__name__)
 
-_db_connection: aiosqlite.Connection | None = None
-_db_lock = asyncio.Lock()
+_db: aiosqlite.Connection | None = None
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS character (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    slug        TEXT,  -- auto-generated from name via slugify()
-    entity_type TEXT NOT NULL DEFAULT 'character' CHECK(entity_type IN ('character','location','creature','visual_asset','generic_troop','faction')),
-    description TEXT,
-    image_prompt TEXT,
-    voice_description TEXT,  -- max ~30 words, e.g. "Deep gravelly voice with a warm laugh"
-    reference_image_url TEXT,
-    media_id TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-
-CREATE TABLE IF NOT EXISTS project (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT,
-    story       TEXT,
-    thumbnail_url TEXT,
-    language    TEXT NOT NULL DEFAULT 'en',
-    status      TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','ARCHIVED','DELETED')),
-    user_paygate_tier TEXT NOT NULL DEFAULT 'PAYGATE_TIER_ONE',
-    narrator_voice TEXT,
-    narrator_ref_audio TEXT,
-    material TEXT DEFAULT 'realistic',
-    allow_music INTEGER NOT NULL DEFAULT 0,
-    allow_voice INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-
-CREATE TABLE IF NOT EXISTS material (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    style_instruction TEXT NOT NULL,
-    negative_prompt TEXT,
-    scene_prefix TEXT,
-    lighting    TEXT DEFAULT 'Studio lighting, highly detailed',
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-
-CREATE TABLE IF NOT EXISTS project_character (
-    project_id    TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    character_id  TEXT NOT NULL REFERENCES character(id) ON DELETE CASCADE,
-    PRIMARY KEY (project_id, character_id)
-);
-
-CREATE TABLE IF NOT EXISTS video (
-    id            TEXT PRIMARY KEY,
-    project_id    TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    title         TEXT NOT NULL,
-    description   TEXT,
-    display_order INTEGER NOT NULL DEFAULT 0,
-    status        TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','PROCESSING','COMPLETED','FAILED')),
-    vertical_url  TEXT,
-    horizontal_url TEXT,
-    thumbnail_url TEXT,
-    duration      REAL,
-    resolution    TEXT,
-    orientation   TEXT CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
-    youtube_id    TEXT,
-    privacy       TEXT NOT NULL DEFAULT 'unlisted',
-    tags          TEXT,
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-
-CREATE TABLE IF NOT EXISTS scene (
+-- ─── Account (Facebook accounts) ────────────────────────────
+CREATE TABLE IF NOT EXISTS account (
     id              TEXT PRIMARY KEY,
-    video_id        TEXT NOT NULL REFERENCES video(id) ON DELETE CASCADE,
-    display_order   INTEGER NOT NULL DEFAULT 0,
-    prompt          TEXT,
-    image_prompt    TEXT,
-    video_prompt    TEXT,
-    character_names TEXT,  -- JSON array of reference entity names (characters, locations, assets)
-
-    parent_scene_id TEXT REFERENCES scene(id) ON DELETE SET NULL,
-    chain_type      TEXT NOT NULL DEFAULT 'ROOT' CHECK(chain_type IN ('ROOT','CONTINUATION','INSERT')),
-    source          TEXT NOT NULL DEFAULT 'root' CHECK(source IN ('root','user','system')),
-
-    -- Vertical orientation
-    vertical_image_url          TEXT,
-    vertical_image_media_id TEXT,
-    vertical_image_status       TEXT NOT NULL DEFAULT 'PENDING' CHECK(vertical_image_status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-    vertical_video_url          TEXT,
-    vertical_video_media_id TEXT,
-    vertical_video_status       TEXT NOT NULL DEFAULT 'PENDING' CHECK(vertical_video_status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-    vertical_upscale_url        TEXT,
-    vertical_upscale_media_id TEXT,
-    vertical_upscale_status     TEXT NOT NULL DEFAULT 'PENDING' CHECK(vertical_upscale_status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-
-    -- Horizontal orientation
-    horizontal_image_url          TEXT,
-    horizontal_image_media_id TEXT,
-    horizontal_image_status       TEXT NOT NULL DEFAULT 'PENDING' CHECK(horizontal_image_status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-    horizontal_video_url          TEXT,
-    horizontal_video_media_id TEXT,
-    horizontal_video_status       TEXT NOT NULL DEFAULT 'PENDING' CHECK(horizontal_video_status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-    horizontal_upscale_url        TEXT,
-    horizontal_upscale_media_id TEXT,
-    horizontal_upscale_status     TEXT NOT NULL DEFAULT 'PENDING' CHECK(horizontal_upscale_status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-
-    -- Chain source (for continuation scenes)
-    vertical_end_scene_media_id   TEXT,
-    horizontal_end_scene_media_id TEXT,
-
-    -- Trim
-    trim_start  REAL,
-    trim_end    REAL,
-    duration    REAL,
-
-    -- Transition (chain scenes only: describes motion from this scene to next)
-    transition_prompt TEXT,
-
-    -- Narration
-    narrator_text TEXT,
-
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    name            TEXT NOT NULL,
+    fb_uid          TEXT,
+    email           TEXT,
+    status          TEXT DEFAULT 'ACTIVE'
+                    CHECK(status IN ('ACTIVE','PAUSED','BANNED','LOGGED_OUT')),
+    profile_url     TEXT,
+    avatar_url      TEXT,
+    cookies_valid   INTEGER DEFAULT 0,
+    last_active     DATETIME,
+    notes           TEXT,
+    daily_posts     INTEGER DEFAULT 0,
+    daily_messages  INTEGER DEFAULT 0,
+    daily_likes     INTEGER DEFAULT 0,
+    daily_comments  INTEGER DEFAULT 0,
+    daily_friends   INTEGER DEFAULT 0,
+    daily_reset_at  DATE,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now')),
+    cookies_data    TEXT,
+    session_data    TEXT
 );
 
-CREATE TABLE IF NOT EXISTS request (
-    id            TEXT PRIMARY KEY,
-    project_id    TEXT REFERENCES project(id) ON DELETE CASCADE,
-    video_id      TEXT REFERENCES video(id) ON DELETE CASCADE,
-    scene_id      TEXT REFERENCES scene(id) ON DELETE CASCADE,
-    character_id  TEXT REFERENCES character(id) ON DELETE CASCADE,
-    type          TEXT NOT NULL CHECK(type IN ('GENERATE_IMAGE','REGENERATE_IMAGE','EDIT_IMAGE','GENERATE_VIDEO','REGENERATE_VIDEO','GENERATE_VIDEO_REFS','UPSCALE_VIDEO','GENERATE_CHARACTER_IMAGE','REGENERATE_CHARACTER_IMAGE','EDIT_CHARACTER_IMAGE')),
-    orientation   TEXT CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
-    status        TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-    request_id    TEXT,   -- external operation ID
-    media_id  TEXT,
-    output_url    TEXT,
-    error_message TEXT,
-    retry_count   INTEGER NOT NULL DEFAULT 0,
-    next_retry_at TEXT,
-    edit_prompt   TEXT,    -- prompt for EDIT_IMAGE requests
-    source_media_id TEXT,  -- source image media_id for EDIT_IMAGE requests
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+-- ─── Post ───────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS post (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    post_type       TEXT NOT NULL DEFAULT 'TEXT'
+                    CHECK(post_type IN ('TEXT','IMAGE','VIDEO','LINK','STORY','REEL')),
+    content         TEXT,
+    media_paths     TEXT,          -- JSON array of local file paths
+    target_type     TEXT DEFAULT 'TIMELINE'
+                    CHECK(target_type IN ('TIMELINE','GROUP','PAGE','STORY','REEL')),
+    target_id       TEXT,          -- Group/Page FB ID
+    target_name     TEXT,
+    status          TEXT DEFAULT 'DRAFT'
+                    CHECK(status IN ('DRAFT','SCHEDULED','POSTING','POSTED','FAILED')),
+    scheduled_at    DATETIME,
+    posted_at       DATETIME,
+    fb_post_id      TEXT,
+    fb_post_url     TEXT,
+    error_message   TEXT,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_post_account ON post(account_id);
+CREATE INDEX IF NOT EXISTS idx_post_status ON post(status);
+CREATE INDEX IF NOT EXISTS idx_post_scheduled ON post(scheduled_at);
 
-CREATE INDEX IF NOT EXISTS idx_scene_video ON scene(video_id);
-CREATE INDEX IF NOT EXISTS idx_scene_order ON scene(video_id, display_order);
-CREATE INDEX IF NOT EXISTS idx_request_status ON request(status);
-CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
-CREATE INDEX IF NOT EXISTS idx_video_project ON video(project_id);
+-- ─── Message ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS message (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    recipient_name  TEXT NOT NULL,
+    recipient_uid   TEXT,
+    content         TEXT NOT NULL,
+    media_path      TEXT,
+    status          TEXT DEFAULT 'PENDING'
+                    CHECK(status IN ('PENDING','SCHEDULED','SENDING','SENT','FAILED')),
+    scheduled_at    DATETIME,
+    sent_at         DATETIME,
+    error_message   TEXT,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_message_account ON message(account_id);
+CREATE INDEX IF NOT EXISTS idx_message_status ON message(status);
+
+-- ─── Task (Job queue — replaces FlowKit 'request') ─────────
+CREATE TABLE IF NOT EXISTS task (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT REFERENCES account(id),
+    task_type       TEXT NOT NULL CHECK(task_type IN (
+        'POST_TEXT','POST_IMAGE','POST_VIDEO','POST_LINK',
+        'POST_STORY','POST_REEL','REUP_VIDEO',
+        'SEND_MESSAGE','SEND_BULK_MESSAGE',
+        'LIKE_POST','COMMENT_POST','SHARE_POST',
+        'ADD_FRIEND','ACCEPT_FRIEND',
+        'JOIN_GROUP','LEAVE_GROUP',
+        'FOLLOW_PAGE','UNFOLLOW_PAGE',
+        'SCRAPE_PROFILE','SCRAPE_GROUP',
+        'CHECK_LOGIN'
+    )),
+    payload         TEXT,          -- JSON payload
+    ref_id          TEXT,          -- Reference to post/message/etc.
+    status          TEXT DEFAULT 'PENDING'
+                    CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED','CANCELLED')),
+    priority        INTEGER DEFAULT 0,
+    retry_count     INTEGER DEFAULT 0,
+    max_retries     INTEGER DEFAULT 3,
+    scheduled_at    DATETIME,
+    started_at      DATETIME,
+    completed_at    DATETIME,
+    result          TEXT,          -- JSON result
+    error_message   TEXT,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_status ON task(status);
+CREATE INDEX IF NOT EXISTS idx_task_type ON task(task_type);
+CREATE INDEX IF NOT EXISTS idx_task_scheduled ON task(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_task_priority ON task(priority DESC);
+CREATE INDEX IF NOT EXISTS idx_task_status_scheduled_priority ON task(status, scheduled_at, priority DESC);
+CREATE INDEX IF NOT EXISTS idx_task_account_status ON task(account_id, status);
+
+-- ─── FB Group ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS fb_group (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT REFERENCES account(id) ON DELETE CASCADE,
+    group_fb_id     TEXT,
+    name            TEXT NOT NULL,
+    url             TEXT,
+    member_count    INTEGER,
+    status          TEXT DEFAULT 'JOINED'
+                    CHECK(status IN ('JOINED','LEFT','PENDING','BLOCKED')),
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_group_account ON fb_group(account_id);
+
+-- ─── Activity Log (audit trail) ─────────────────────────────
+CREATE TABLE IF NOT EXISTS activity_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      TEXT REFERENCES account(id),
+    action          TEXT NOT NULL,
+    detail          TEXT,
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_activity_account ON activity_log(account_id);
+CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(created_at);
+
+-- ─── Spy Ad (competitor ad monitoring) ──────────────────────
+CREATE TABLE IF NOT EXISTS spy_ad (
+    id              TEXT PRIMARY KEY,
+    target_id       TEXT NOT NULL,
+    fb_ad_id        TEXT,
+    page_name       TEXT,
+    ad_text         TEXT,
+    media_url       TEXT,
+    ad_status       TEXT DEFAULT 'ACTIVE',
+    first_seen      DATETIME DEFAULT (datetime('now')),
+    last_seen       DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_spy_ad_target ON spy_ad(target_id);
+CREATE INDEX IF NOT EXISTS idx_spy_ad_fb ON spy_ad(fb_ad_id);
+
+-- ─── Scraped Data (group members, profile info, comments) ──
+CREATE TABLE IF NOT EXISTS scraped_data (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT REFERENCES account(id),
+    data_type       TEXT NOT NULL
+                    CHECK(data_type IN ('GROUP_MEMBERS','PROFILE_INFO','LIVE_COMMENTS','POST_COMMENTS','PAGE_FOLLOWERS')),
+    source_url      TEXT,
+    source_id       TEXT,
+    data            TEXT,          -- JSON blob
+    item_count      INTEGER DEFAULT 0,
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_scraped_type ON scraped_data(data_type);
+CREATE INDEX IF NOT EXISTS idx_scraped_source ON scraped_data(source_id);
+
+-- ─── Seed Campaign (auto-engagement campaigns) ─────────────
+CREATE TABLE IF NOT EXISTS seed_campaign (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    config          TEXT,          -- JSON config
+    status          TEXT DEFAULT 'ACTIVE'
+                    CHECK(status IN ('ACTIVE','PAUSED','COMPLETED','CANCELLED')),
+    stats           TEXT,          -- JSON stats
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_seed_campaign_status ON seed_campaign(status);
+
+-- ─── Task Strategy (learned automation patterns) ────────────
+CREATE TABLE IF NOT EXISTS task_strategy (
+    id              TEXT PRIMARY KEY,
+    task_type       TEXT NOT NULL,
+    url_pattern     TEXT DEFAULT '*',
+    selectors       TEXT,          -- JSON: known-good CSS selectors
+    wait_strategies TEXT,          -- JSON: timing/wait approaches
+    workarounds     TEXT,          -- JSON: error workarounds
+    success_count   INTEGER DEFAULT 0,
+    fail_count      INTEGER DEFAULT 0,
+    last_success    DATETIME,
+    last_failure    DATETIME,
+    notes           TEXT,          -- human-readable strategy notes
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_type_url ON task_strategy(task_type, url_pattern);
+CREATE INDEX IF NOT EXISTS idx_strategy_type ON task_strategy(task_type);
+
+-- ─── Task Trace (structured execution traces) ───────────────
+CREATE TABLE IF NOT EXISTS task_trace (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         TEXT REFERENCES task(id) ON DELETE CASCADE,
+    task_type       TEXT NOT NULL,
+    account_id      TEXT,
+    status          TEXT NOT NULL CHECK(status IN ('SUCCESS','FAILURE')),
+    duration_ms     INTEGER,
+    steps           TEXT,          -- JSON: [{action, selector, result, timestamp}]
+    error_detail    TEXT,
+    strategy_id     TEXT REFERENCES task_strategy(id),
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_trace_task ON task_trace(task_id);
+CREATE INDEX IF NOT EXISTS idx_trace_type ON task_trace(task_type);
+CREATE INDEX IF NOT EXISTS idx_trace_status ON task_trace(status);
+
+-- ─── Spy Target (competitor page/ad monitoring) ──────────────
+CREATE TABLE IF NOT EXISTS spy_target (
+    id              TEXT PRIMARY KEY,
+    page_name       TEXT NOT NULL,
+    page_id         TEXT NOT NULL,
+    page_url        TEXT,
+    check_interval  INTEGER DEFAULT 3600,
+    last_checked    DATETIME,
+    ads_found       INTEGER DEFAULT 0,
+    status          TEXT DEFAULT 'ACTIVE'
+                    CHECK(status IN ('ACTIVE','PAUSED')),
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
 """
 
 
-async def init_db():
-    """Initialize database with schema and run migrations."""
-    async with aiosqlite.connect(str(DB_PATH)) as db:
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("PRAGMA foreign_keys=ON")
-        await db.executescript(SCHEMA)
-        # Migration: add slug column to character table + backfill
-        cursor = await db.execute("PRAGMA table_info(character)")
-        columns = {row[1] for row in await cursor.fetchall()}
-        if "slug" not in columns:
-            await db.execute("ALTER TABLE character ADD COLUMN slug TEXT")
-            logger.info("Migrated: added slug column to character table")
-        # Backfill slugs for existing characters (Python-side since SQLite has no slugify)
-        cursor = await db.execute("SELECT id, name FROM character WHERE slug IS NULL OR slug = ''")
-        chars_without_slug = await cursor.fetchall()
-        if chars_without_slug:
-            from agent.utils.slugify import slugify as _slugify
-            for row in chars_without_slug:
-                _slug = _slugify(row[1])
-                await db.execute("UPDATE character SET slug=? WHERE id=?", (_slug, row[0]))
-            logger.info("Backfilled slug for %d characters", len(chars_without_slug))
-        # Migration: add voice_description if missing (added after initial schema)
-        cursor = await db.execute("PRAGMA table_info(character)")
-        columns = {row[1] for row in await cursor.fetchall()}
-        if "voice_description" not in columns:
-            await db.execute("ALTER TABLE character ADD COLUMN voice_description TEXT DEFAULT ''")
-            logger.info("Migrated: added voice_description column to character table")
-        # Migration: add edit_prompt and source_media_id to request table
-        cursor = await db.execute("PRAGMA table_info(request)")
-        req_columns = {row[1] for row in await cursor.fetchall()}
-        if "edit_prompt" not in req_columns:
-            await db.execute("ALTER TABLE request ADD COLUMN edit_prompt TEXT")
-            logger.info("Migrated: added edit_prompt column to request table")
-        if "source_media_id" not in req_columns:
-            await db.execute("ALTER TABLE request ADD COLUMN source_media_id TEXT")
-            logger.info("Migrated: added source_media_id column to request table")
-        # Migration: add queue columns to request table
-        cursor = await db.execute("PRAGMA table_info(request)")
-        request_columns = {row[1] for row in await cursor.fetchall()}
-        if "next_retry_at" not in request_columns:
-            await db.execute("ALTER TABLE request ADD COLUMN next_retry_at TEXT")
-            logger.info("Migrated: added next_retry_at column to request table")
-        if "retry_count" not in request_columns:
-            await db.execute("ALTER TABLE request ADD COLUMN retry_count INTEGER DEFAULT 0")
-            logger.info("Migrated: added retry_count column to request table")
-        # Migration: ensure request table CHECK constraint includes all request types
-        # SQLite can't alter CHECK constraints, so recreate the table
-        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='request' AND type='table'")
-        row = await cursor.fetchone()
-        needs_recreate = False
-        if row:
-            table_sql = row[0]
-            if 'GENERATE_IMAGES' in table_sql and 'GENERATE_IMAGE,' not in table_sql:
-                needs_recreate = True  # old GENERATE_IMAGES typo
-            if 'REGENERATE_IMAGE' not in table_sql:
-                needs_recreate = True  # missing REGENERATE/EDIT types
-        if needs_recreate:
-            await db.execute("PRAGMA foreign_keys=OFF")
-            await db.execute("ALTER TABLE request RENAME TO _request_old")
-            await db.executescript("""
-CREATE TABLE IF NOT EXISTS request (
-    id            TEXT PRIMARY KEY,
-    project_id    TEXT REFERENCES project(id) ON DELETE CASCADE,
-    video_id      TEXT REFERENCES video(id) ON DELETE CASCADE,
-    scene_id      TEXT REFERENCES scene(id) ON DELETE CASCADE,
-    character_id  TEXT REFERENCES character(id) ON DELETE CASCADE,
-    type          TEXT NOT NULL CHECK(type IN ('GENERATE_IMAGE','REGENERATE_IMAGE','EDIT_IMAGE','GENERATE_VIDEO','REGENERATE_VIDEO','GENERATE_VIDEO_REFS','UPSCALE_VIDEO','GENERATE_CHARACTER_IMAGE','REGENERATE_CHARACTER_IMAGE','EDIT_CHARACTER_IMAGE')),
-    orientation   TEXT CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
-    status        TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
-    request_id    TEXT,
-    media_id      TEXT,
-    output_url    TEXT,
-    error_message TEXT,
-    retry_count   INTEGER NOT NULL DEFAULT 0,
-    next_retry_at TEXT,
-    edit_prompt   TEXT,
-    source_media_id TEXT,
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_request_status ON request(status);
-CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
-""")
-            await db.execute("INSERT OR IGNORE INTO request SELECT * FROM _request_old")
-            await db.execute("UPDATE request SET type='GENERATE_IMAGE' WHERE type='GENERATE_IMAGES'")
-            await db.execute("DROP TABLE _request_old")
-            await db.execute("PRAGMA foreign_keys=ON")
-            logger.info("Migrated: renamed GENERATE_IMAGES -> GENERATE_IMAGE in request table")
-        # Migration: add source column to scene table
-        cursor = await db.execute("PRAGMA table_info(scene)")
-        scene_columns = {row[1] for row in await cursor.fetchall()}
-        if "source" not in scene_columns:
-            await db.execute("ALTER TABLE scene ADD COLUMN source TEXT NOT NULL DEFAULT 'root'")
-            logger.info("Migrated: added source column to scene table")
-        if "narrator_text" not in scene_columns:
-            await db.execute("ALTER TABLE scene ADD COLUMN narrator_text TEXT")
-            logger.info("Migrated: added narrator_text column to scene table")
-        # Migration: add narrator fields to project table
-        cursor = await db.execute("PRAGMA table_info(project)")
-        project_columns = {row[1] for row in await cursor.fetchall()}
-        if "narrator_voice" not in project_columns:
-            await db.execute("ALTER TABLE project ADD COLUMN narrator_voice TEXT")
-            logger.info("Migrated: added narrator_voice column to project table")
-        if "narrator_ref_audio" not in project_columns:
-            await db.execute("ALTER TABLE project ADD COLUMN narrator_ref_audio TEXT")
-            logger.info("Migrated: added narrator_ref_audio column to project table")
-        if "material" not in project_columns:
-            await db.execute("ALTER TABLE project ADD COLUMN material TEXT DEFAULT 'realistic'")
-            logger.info("Migrated: added material column to project table")
-        if "allow_music" not in project_columns:
-            await db.execute("ALTER TABLE project ADD COLUMN allow_music INTEGER NOT NULL DEFAULT 0")
-            logger.info("Migrated: added allow_music column to project table")
-        if "allow_voice" not in project_columns:
-            await db.execute("ALTER TABLE project ADD COLUMN allow_voice INTEGER NOT NULL DEFAULT 0")
-            logger.info("Migrated: added allow_voice column to project table")
-        # Migration: add orientation to video table + backfill from scene data
-        cursor = await db.execute("PRAGMA table_info(video)")
-        video_columns = {row[1] for row in await cursor.fetchall()}
-        if "orientation" not in video_columns:
-            await db.execute("ALTER TABLE video ADD COLUMN orientation TEXT CHECK(orientation IN ('VERTICAL','HORIZONTAL'))")
-            # Backfill: detect orientation from completed scene fields
-            cursor = await db.execute("SELECT id FROM video")
-            video_ids = [row[0] for row in await cursor.fetchall()]
-            for vid in video_ids:
-                cursor2 = await db.execute(
-                    "SELECT horizontal_image_status, vertical_image_status FROM scene WHERE video_id = ? LIMIT 1", (vid,))
-                scene = await cursor2.fetchone()
-                if scene:
-                    if scene[0] == "COMPLETED":
-                        await db.execute("UPDATE video SET orientation = 'HORIZONTAL' WHERE id = ?", (vid,))
-                    elif scene[1] == "COMPLETED":
-                        await db.execute("UPDATE video SET orientation = 'VERTICAL' WHERE id = ?", (vid,))
-            logger.info("Migrated: added orientation column to video table with backfill")
-        # Migration: create material table if missing
-        cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='material'")
-        if not await cursor.fetchone():
-            await db.execute("""CREATE TABLE material (
-    id TEXT PRIMARY KEY, name TEXT NOT NULL, style_instruction TEXT NOT NULL,
-    negative_prompt TEXT, scene_prefix TEXT, lighting TEXT DEFAULT 'Studio lighting, highly detailed',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))""")
-            logger.info("Migrated: created material table")
-        await db.commit()
-    logger.info("Database initialized at %s", DB_PATH)
-
-
 async def get_db() -> aiosqlite.Connection:
-    """Return the shared database connection, creating it if needed."""
-    global _db_connection
-    if _db_connection is None:
-        _db_connection = await aiosqlite.connect(str(DB_PATH))
-        _db_connection.row_factory = aiosqlite.Row
-        await _db_connection.execute("PRAGMA journal_mode=WAL")
-        await _db_connection.execute("PRAGMA foreign_keys=ON")
-        # Force WAL checkpoint so this connection sees all committed writes
-        # from previous processes (e.g. after hot-reload)
-        await _db_connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
-    return _db_connection
+    global _db
+    if _db is None:
+        _db = await aiosqlite.connect(DB_PATH)
+        _db.row_factory = aiosqlite.Row
+        await _db.execute("PRAGMA journal_mode=WAL")
+        await _db.execute("PRAGMA foreign_keys=ON")
+    return _db
 
 
-async def close_db() -> None:
-    """Close the shared database connection."""
-    global _db_connection
-    if _db_connection is not None:
-        await _db_connection.close()
-        _db_connection = None
-        logger.info("Database connection closed")
+_MIGRATIONS = [
+    "ALTER TABLE account ADD COLUMN cookies_data TEXT",
+    "ALTER TABLE account ADD COLUMN session_data TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_task_status_scheduled_priority ON task(status, scheduled_at, priority DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_task_account_status ON task(account_id, status)",
+]
+
+
+async def init_db():
+    db = await get_db()
+    await db.executescript(SCHEMA)
+
+    for stmt in _MIGRATIONS:
+        try:
+            await db.execute(stmt)
+        except Exception as exc:
+            # Safe for re-run / legacy DBs where column/index already exists.
+            logger.debug("Migration skipped (%s): %s", stmt, exc)
+
+    await db.commit()
+    logger.info("Database initialized: %s", DB_PATH)
+
+
+async def close_db():
+    global _db
+    if _db:
+        await _db.close()
+        _db = None
+        logger.info("Database closed")

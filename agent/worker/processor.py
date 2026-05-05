@@ -1,525 +1,626 @@
-"""Background worker — processes pending requests via Chrome extension.
+"""FBKit — Task queue processor.
 
-Thin dispatcher: picks up PENDING requests, delegates to OperationService
-for actual API work, handles status transitions + retry + scene updates.
+Polls for pending tasks, dispatches to FBClient, updates results.
+Enforces rate limits and human-like session management.
 """
 import asyncio
-import base64
 import json
 import logging
-import time
+import traceback
+from datetime import datetime
 
-import aiohttp
-
+from agent.config import (
+    MAX_CONCURRENT_TASKS,
+    MAX_RETRIES,
+    POLL_INTERVAL,
+)
 from agent.db import crud
-from agent.services.flow_client import get_flow_client
+from agent.services.fb_client import get_fb_client
+from agent.services.human_delay import action_delay, long_delay, get_session_manager
 from agent.services.event_bus import event_bus
-from agent.config import POLL_INTERVAL, MAX_RETRIES, API_COOLDOWN, MAX_CONCURRENT_REQUESTS
-from agent.worker._parsing import _is_error
-from agent.sdk.services.result_handler import parse_result, apply_scene_result, apply_character_result
+from agent.services.notifier import get_notifier
+from agent.services.safety_gate import dry_run_from_payload, enforce_payload
 
 logger = logging.getLogger(__name__)
 
-_API_CALL_TYPES = {"GENERATE_IMAGE", "REGENERATE_IMAGE", "EDIT_IMAGE",
-                   "GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS", "UPSCALE_VIDEO",
-                   "GENERATE_CHARACTER_IMAGE", "REGENERATE_CHARACTER_IMAGE",
-                   "EDIT_CHARACTER_IMAGE"}
+# Map task_type → daily counter field in account table
+_COUNTER_MAP = {
+    "POST_TEXT": "daily_posts",
+    "POST_IMAGE": "daily_posts",
+    "POST_VIDEO": "daily_posts",
+    "POST_LINK": "daily_posts",
+    "POST_STORY": "daily_posts",
+    "POST_REEL": "daily_posts",
+    "SEND_MESSAGE": "daily_messages",
+    "SEND_BULK_MESSAGE": "daily_messages",
+    "LIKE_POST": "daily_likes",
+    "COMMENT_POST": "daily_comments",
+    "ADD_FRIEND": "daily_friends",
+    "ACCEPT_FRIEND": "daily_friends",
+    "SHARE_POST": "daily_posts",
+}
 
-_TYPE_PRIORITY = {
-    "GENERATE_CHARACTER_IMAGE": 0, "REGENERATE_CHARACTER_IMAGE": 0, "EDIT_CHARACTER_IMAGE": 0,
-    "GENERATE_IMAGE": 1, "REGENERATE_IMAGE": 1, "EDIT_IMAGE": 1,
-    "GENERATE_VIDEO": 2, "REGENERATE_VIDEO": 2, "GENERATE_VIDEO_REFS": 2,
-    "UPSCALE_VIDEO": 3,
+# Map task_type → rate limit config key
+_RATE_LIMITS = {
+    "daily_posts": "RATE_LIMIT_POSTS_PER_DAY",
+    "daily_messages": "RATE_LIMIT_MESSAGES_PER_DAY",
+    "daily_likes": "RATE_LIMIT_LIKES_PER_DAY",
+    "daily_comments": "RATE_LIMIT_COMMENTS_PER_DAY",
+    "daily_friends": "RATE_LIMIT_FRIEND_REQUESTS_PER_DAY",
 }
 
 
-class APIRateLimiter:
-    """Enforces max concurrent requests AND minimum gap between API calls."""
-    def __init__(self, max_concurrent: int, cooldown_seconds: float):
-        self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._cooldown = cooldown_seconds
-        self._last_call = 0.0
-        self._gate = asyncio.Lock()
+def _classify_error(error_message: str) -> str:
+    lower = (error_message or "").lower()
+    non_retryable_keywords = (
+        "invalid api key",
+        "unauthorized",
+        "forbidden",
+        "not logged in",
+        "unsupported",
+        "unknown task type",
+        "validation",
+    )
+    if any(k in lower for k in non_retryable_keywords):
+        return "NON_RETRYABLE"
+    return "RETRYABLE"
 
-    async def acquire(self):
-        await self._semaphore.acquire()
-        async with self._gate:
-            elapsed = time.monotonic() - self._last_call
-            if elapsed < self._cooldown:
-                await asyncio.sleep(self._cooldown - elapsed)
-            self._last_call = time.monotonic()
 
-    def release(self):
-        self._semaphore.release()
+def _next_retry_delay_s(retry_count: int) -> int:
+    base = 2
+    cap = 120
+    exp = min(cap, base ** max(retry_count, 1))
+    jitter = int((retry_count * 131) % 3)
+    return exp + jitter
+
+
+def _strategy_url_from_payload(payload: dict) -> str:
+    for key in ("postUrl", "groupUrl", "pageUrl", "profileUrl", "sourceUrl"):
+        if payload.get(key):
+            return payload[key]
+
+    target_type = payload.get("targetType")
+    target_id = payload.get("targetId")
+    if target_type and target_id:
+        return f"{str(target_type).upper()}:{target_id}"
+
+    return "*"
+
+
+def _quota_units_for_task(task_type: str, payload: dict) -> int:
+    if task_type == "SEND_BULK_MESSAGE":
+        return len(_bulk_recipients_from_payload(payload))
+    return 1
+
+
+def _bulk_recipients_from_payload(payload: dict) -> list[dict]:
+    recipients = payload.get("recipients")
+    if not isinstance(recipients, list) or not recipients:
+        raise ValueError("SEND_BULK_MESSAGE requires a non-empty recipients list")
+    for index, recipient in enumerate(recipients, start=1):
+        if not isinstance(recipient, dict):
+            raise ValueError(f"Recipient #{index} must be an object")
+        if not recipient.get("uid") and not recipient.get("name"):
+            raise ValueError(f"Recipient #{index} requires uid or name")
+    return recipients
 
 
 class WorkerController:
-    """Controls the background worker loop with rate limiting and graceful shutdown."""
+    """Controls the background task processor."""
 
     def __init__(self):
-        self._shutdown = asyncio.Event()
-        self._active_ids: set[str] = set()
-        self._rate_limiter = APIRateLimiter(MAX_CONCURRENT_REQUESTS, API_COOLDOWN)
-        self._deferred: dict[str, float] = {}  # rid -> defer_until timestamp
-        self._retry_after: dict[str, float] = {}  # rid -> retry_after timestamp
+        self._shutdown = False
+        self._active_count = 0
 
     @property
     def active_count(self) -> int:
-        """Number of currently active requests."""
-        return len(self._active_ids)
+        return self._active_count
+
+    def request_shutdown(self, *args):
+        self._shutdown = True
+        logger.info("Worker shutdown requested")
+
+    async def drain(self):
+        """Wait for active tasks to finish."""
+        while self._active_count > 0:
+            await asyncio.sleep(0.5)
+        logger.info("Worker drained")
 
     async def start(self):
-        """Start the worker loop."""
-        await self._cleanup_stale_processing()
-        await self._run_loop()
+        """Main worker loop — polls for pending tasks."""
+        logger.info("Worker started (poll=%ds, max_concurrent=%d)",
+                     POLL_INTERVAL, MAX_CONCURRENT_TASKS)
+        session = get_session_manager()
 
-    def request_shutdown(self):
-        """Signal the worker to stop after current tasks drain."""
-        self._shutdown.set()
-
-    async def drain(self, timeout: float = 30.0):
-        """Wait until all active tasks complete, with timeout."""
-        deadline = time.monotonic() + timeout
-        while self._active_ids and time.monotonic() < deadline:
-            await asyncio.sleep(0.5)
-        if self._active_ids:
-            logger.warning("Drain timeout: %d tasks still active after %.0fs", len(self._active_ids), timeout)
-
-    async def _cleanup_stale_processing(self):
-        """Reset any requests stuck in PROCESSING state from a previous run."""
-        try:
-            stale = await crud.list_requests(status="PROCESSING")
-            for req in stale:
-                await crud.update_request(req["id"], status="PENDING",
-                                          error_message="reset: stale PROCESSING on startup")
-                logger.warning("Stale request reset: %s type=%s", req["id"][:8], req.get("type"))
-            if stale:
-                logger.info("Cleaned up %d stale PROCESSING requests", len(stale))
-        except Exception as e:
-            logger.warning("Could not clean up stale requests: %s", e)
-
-    async def _run_loop(self):
-        client = get_flow_client()
-
-        while not self._shutdown.is_set():
+        while not self._shutdown:
             try:
+                # Session management — take breaks like a real user
+                if session.should_take_break():
+                    break_duration = session.take_break()
+                    await event_bus.emit("worker_break", {
+                        "duration_s": int(break_duration),
+                        "session": session.session_info,
+                    })
+                    await asyncio.sleep(min(break_duration, 60))  # Check shutdown every 60s
+                    continue
+
+                # Check extension connection
+                client = get_fb_client()
                 if not client.connected:
                     await asyncio.sleep(POLL_INTERVAL)
                     continue
 
-                now = time.time()
-                slots_available = MAX_CONCURRENT_REQUESTS - len(self._active_ids)
-                if slots_available <= 0:
+                # Respect concurrency limit
+                if self._active_count >= MAX_CONCURRENT_TASKS:
+                    await asyncio.sleep(1)
+                    continue
+
+                # Claim next task before launching async processing to avoid duplicate dispatch.
+                task = await crud.claim_next_pending_task()
+                if task is None:
                     await asyncio.sleep(POLL_INTERVAL)
                     continue
 
-                pending = await crud.list_actionable_requests(
-                    exclude_ids=self._active_ids, limit=slots_available
-                )
+                # Check rate limit
+                if not await self._check_rate_limit(task):
+                    logger.warning("Rate limit hit for %s (account %s), skipping",
+                                   task["task_type"], task["account_id"][:8])
+                    await crud.update_task(task["id"], status="FAILED",
+                                           error_message="Daily rate limit exceeded")
+                    continue
 
-                pending_count = len(pending)
-                await event_bus.emit("worker_tick", {
-                    "active": len(self._active_ids),
-                    "slots": slots_available,
-                    "pending": pending_count,
-                })
-
-                if pending:
-                    logger.info("Worker: %d actionable, %d active, %d slots",
-                                len(pending), len(self._active_ids), slots_available)
-
-                for req in pending:
-                    if slots_available <= 0:
-                        break
-                    rid = req["id"]
-
-                    # Skip in-flight
-                    if rid in self._active_ids:
-                        continue
-
-                    # Skip recently deferred (prereq or retry cooldown)
-                    if rid in self._deferred and self._deferred[rid] > now:
-                        continue
-                    self._deferred.pop(rid, None)
-
-                    # Skip if retry backoff not elapsed
-                    if rid in self._retry_after and self._retry_after[rid] > now:
-                        continue
-
-                    self._active_ids.add(rid)
-                    slots_available -= 1
-                    asyncio.create_task(self._run_one(req))
-
-                # Prune stale deferred/retry entries for requests no longer pending
-                pending_ids = {r["id"] for r in pending}
-                self._deferred = {k: v for k, v in self._deferred.items() if k in pending_ids}
-                self._retry_after = {k: v for k, v in self._retry_after.items() if k in pending_ids}
+                # Process task
+                self._active_count += 1
+                asyncio.create_task(self._process_task(task))
 
             except Exception as e:
-                logger.exception("Worker loop error: %s", e)
+                logger.error("Worker loop error: %s", e)
+                await asyncio.sleep(POLL_INTERVAL)
 
-            await asyncio.sleep(POLL_INTERVAL)
+        logger.info("Worker stopped")
 
-    async def _run_one(self, req: dict):
-        rid = req["id"]
+    async def _check_rate_limit(self, task: dict) -> bool:
+        """Reserve live-action quota for a task unless Safety Gate forces dry-run."""
+        from agent import config
+        task_type = task["task_type"]
+        payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
+        payload = enforce_payload(task_type, payload)
+        if dry_run_from_payload(payload):
+            return True
+
+        counter_field = _COUNTER_MAP.get(task_type)
+        if not counter_field:
+            return True  # No rate limit for this task type
+        limit_key = _RATE_LIMITS.get(counter_field)
+        limit = getattr(config, limit_key, 999) if limit_key else 999
         try:
-            await self._rate_limiter.acquire()
-            try:
-                await _process_one(req, self._deferred, self._retry_after)
-            finally:
-                self._rate_limiter.release()
-        finally:
-            self._active_ids.discard(rid)
+            units = _quota_units_for_task(task_type, payload)
+        except ValueError as exc:
+            logger.warning("Invalid quota payload for %s: %s", task_type, exc)
+            return False
+        reservation = payload.get("_quotaReserved") or {}
+        if (
+            reservation.get("counter") == counter_field
+            and int(reservation.get("units", 0)) >= units
+        ):
+            return True
 
+        reserved = await crud.reserve_daily_counter(
+            task["account_id"],
+            counter_field,
+            units,
+            limit,
+        )
+        if reserved and task.get("id"):
+            payload["_quotaReserved"] = {"counter": counter_field, "units": units}
+            await crud.update_task(task["id"], payload=json.dumps(payload))
+        return reserved
 
-async def _prerequisites_met(req: dict, orientation: str) -> bool:
-    """Check if prerequisites are ready. Returns False to defer (stay PENDING)."""
-    req_type = req.get("type", "")
-    prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
+    async def _process_task(self, task: dict):
+        """Process a single task."""
+        task_id = task["id"]
+        task_type = task["task_type"]
+        session = get_session_manager()
+        started_at_ms = int(datetime.utcnow().timestamp() * 1000)
+        payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
+        payload = enforce_payload(task_type, payload)
+        is_dry_run = dry_run_from_payload(payload)
+        strategy_url = _strategy_url_from_payload(payload)
 
-    # Video gen needs scene image to be ready; upscale needs video to be ready
-    if req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS", "UPSCALE_VIDEO"):
-        scene = await crud.get_scene(req.get("scene_id"))
-        if not scene:
-            return True  # let _dispatch handle "scene not found"
-        if req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS"):
-            if not scene.get(f"{prefix}_image_media_id"):
-                logger.info("VIDEO prereq deferred: scene=%s no %s_image_media_id", req.get("scene_id","")[:12], prefix)
-                return False
-        elif req_type == "UPSCALE_VIDEO":
-            if not scene.get(f"{prefix}_video_media_id"):
-                logger.info("UPSCALE prereq deferred: scene=%s no %s_video_media_id", req.get("scene_id","")[:12], prefix)
-                return False
+        # Resolve the fb_uid for this account so we route to the right extension
+        fb_uid: str | None = None
+        if task.get("account_id"):
+            account = await crud.get_account(task["account_id"])
+            if account:
+                fb_uid = account.get("fb_uid")  # may be None for legacy accounts
 
-    # Edit requests need source media (own image or parent's for INSERT scenes)
-    if req_type in ("EDIT_IMAGE", "EDIT_CHARACTER_IMAGE"):
-        if not req.get("source_media_id"):
-            if req_type == "EDIT_CHARACTER_IMAGE":
-                char = await crud.get_character(req.get("character_id"))
-                if not char or not char.get("media_id"):
-                    return False
-            elif req_type == "EDIT_IMAGE":
-                scene = await crud.get_scene(req.get("scene_id"))
-                if not scene:
-                    return True  # let _dispatch handle
-                # CONTINUATION scenes always use parent's image as source
-                src = None
-                if scene.get("parent_scene_id"):
-                    parent = await crud.get_scene(scene["parent_scene_id"])
-                    src = parent.get(f"{prefix}_image_media_id") if parent else None
-                if not src:
-                    src = scene.get(f"{prefix}_image_media_id")
-                logger.info("EDIT_IMAGE prereq: scene=%s src=%s parent=%s", req.get("scene_id","")[:12], src, scene.get("parent_scene_id","")[:12] if scene.get("parent_scene_id") else "none")
-                if not src:
-                    return False
-
-    return True
-
-
-async def _resolve_orientation(req: dict) -> str:
-    """Resolve orientation from request, falling back to video table, then VERTICAL."""
-    orient = req.get("orientation")
-    if orient:
-        return orient
-    vid = req.get("video_id")
-    if vid:
-        video = await crud.get_video(vid)
-        if video and video.get("orientation"):
-            return video["orientation"]
-    return "VERTICAL"
-
-
-async def _process_one(req: dict, deferred: dict = None, retry_after: dict = None):
-    rid, req_type = req["id"], req["type"]
-    orientation = await _resolve_orientation(req)
-
-    if await _is_already_completed(req, orientation):
-        logger.info("Request %s skipped — already COMPLETED", rid[:8])
-        # Copy existing result data from scene/character onto the request record
-        skip_kwargs = {"status": "COMPLETED", "error_message": "skipped: already completed"}
-        prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
-        if req_type in ("GENERATE_CHARACTER_IMAGE", "REGENERATE_CHARACTER_IMAGE", "EDIT_CHARACTER_IMAGE"):
-            char = await crud.get_character(req.get("character_id"))
-            if char:
-                skip_kwargs["media_id"] = char.get("media_id")
-                skip_kwargs["output_url"] = char.get("image_url")
-        else:
-            scene = await crud.get_scene(req.get("scene_id"))
-            if scene:
-                if req_type == "GENERATE_IMAGE":
-                    skip_kwargs["media_id"] = scene.get(f"{prefix}_image_media_id")
-                    skip_kwargs["output_url"] = scene.get(f"{prefix}_image_url")
-                elif req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS"):
-                    skip_kwargs["media_id"] = scene.get(f"{prefix}_video_media_id")
-                    skip_kwargs["output_url"] = scene.get(f"{prefix}_video_url")
-                elif req_type == "UPSCALE_VIDEO":
-                    skip_kwargs["media_id"] = scene.get(f"{prefix}_upscale_media_id")
-                    skip_kwargs["output_url"] = scene.get(f"{prefix}_upscale_url")
-        await crud.update_request(rid, **skip_kwargs)
-        return
-
-    # Check prerequisites before dispatching — don't burn retries on missing deps
-    if not await _prerequisites_met(req, orientation):
-        if deferred is not None:
-            deferred[rid] = time.time() + 30  # defer 30s before rechecking
-        return
-
-    logger.info("Processing request %s type=%s", rid[:8], req_type)
-    await crud.update_request(rid, status="PROCESSING")
-    await event_bus.emit("request_update", {"id": rid, "status": "PROCESSING", "type": req_type})
-
-    try:
-        result = await _dispatch(req, orientation)
-        if _is_error(result):
-            await _handle_failure(rid, req, result, retry_after)
-        else:
-            gen_result = parse_result(result, req_type)
-            await crud.update_request(rid, status="COMPLETED", media_id=gen_result.media_id, output_url=gen_result.url)
-            if req_type in ("GENERATE_CHARACTER_IMAGE", "REGENERATE_CHARACTER_IMAGE", "EDIT_CHARACTER_IMAGE"):
-                char_id = req.get("character_id")
-                if char_id:
-                    await apply_character_result(char_id, gen_result)
-            else:
-                await apply_scene_result(req.get("scene_id"), req_type, orientation, gen_result)
-            await event_bus.emit("request_update", {"id": rid, "status": "COMPLETED"})
-            logger.info("Request %s COMPLETED: media=%s", rid[:8], gen_result.media_id[:20] if gen_result.media_id else "?")
-    except Exception as e:
-        logger.exception("Request %s exception: %s", rid[:8], e)
-        await event_bus.emit("request_update", {"id": rid, "status": "FAILED", "error": str(e)})
-        await _handle_failure(rid, req, {"error": str(e)}, retry_after)
-
-
-async def _dispatch(req: dict, orientation: str) -> dict:
-    """Route request to the appropriate OperationService method."""
-    from agent.sdk.services.operations import get_operations
-    ops = get_operations()
-    req_type, rid = req["type"], req["id"]
-    pid = req.get("project_id", "0")
-
-    # Scene-based operations
-    if req_type in ("GENERATE_IMAGE", "REGENERATE_IMAGE", "EDIT_IMAGE",
-                    "GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS", "UPSCALE_VIDEO"):
-        scene = await crud.get_scene(req.get("scene_id"))
-        if not scene:
-            return {"error": "Scene not found"}
-        scene["_project_id"] = pid
-
-        if req_type in ("GENERATE_IMAGE", "REGENERATE_IMAGE"):
-            return await ops.generate_scene_image(scene, orientation)
-        if req_type == "EDIT_IMAGE":
-            return await ops.edit_scene_image(scene, orientation, source_media_id=req.get("source_media_id"))
-        if req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO"):
-            return await ops.generate_scene_video(scene, orientation, request_id=rid)
-        if req_type == "GENERATE_VIDEO_REFS":
-            return await ops.generate_scene_video_refs(scene, orientation, request_id=rid)
-        if req_type == "UPSCALE_VIDEO":
-            return await ops.upscale_scene_video(scene, orientation, request_id=rid)
-
-    # Character operations
-    if req_type in ("GENERATE_CHARACTER_IMAGE", "REGENERATE_CHARACTER_IMAGE", "EDIT_CHARACTER_IMAGE"):
-        char = await crud.get_character(req.get("character_id"))
-        if not char:
-            return {"error": "Character not found"}
-        if req_type == "REGENERATE_CHARACTER_IMAGE":
-            # Clear existing media so generate_reference_image takes the normal (not fast) path
-            await crud.update_character(char["id"], media_id=None, reference_image_url=None)
-            char["media_id"] = None
-            char["reference_image_url"] = None
-            return await ops.generate_reference_image(char, pid)
-        if req_type == "EDIT_CHARACTER_IMAGE":
-            src = req.get("source_media_id") or char.get("media_id")
-            if not src:
-                return {"error": "No source image to edit — generate a reference image first"}
-            edit_prompt = char.get("image_prompt") or char.get("description", "")
-            project = await crud.get_project(pid) if pid != "0" else None
-            tier = project.get("user_paygate_tier", "PAYGATE_TIER_ONE") if project else "PAYGATE_TIER_ONE"
-            aspect = "IMAGE_ASPECT_RATIO_LANDSCAPE" if char.get("entity_type") in ("location",) else "IMAGE_ASPECT_RATIO_PORTRAIT"
-            return await ops._client.edit_image(
-                prompt=edit_prompt, source_media_id=src,
-                project_id=pid, aspect_ratio=aspect,
-                user_paygate_tier=tier,
+        # Load learned strategy for this task type (AutoBrowse pattern)
+        strategy = await crud.get_strategy(task_type, strategy_url)
+        strategy_id = strategy["id"] if strategy else None
+        if strategy:
+            logger.info(
+                "Task %s (%s) using strategy for %s: %d successes, %d failures",
+                task_id[:8], task_type, strategy.get("url_pattern", strategy_url),
+                strategy.get("success_count", 0),
+                strategy.get("fail_count", 0),
             )
-        return await ops.generate_reference_image(char, pid)
 
-    return {"error": f"Unknown request type: {req_type}"}
+        try:
+            # Mark as processing
+            await crud.update_task(task_id, status="PROCESSING",
+                                   started_at=datetime.utcnow().isoformat())
+            await event_bus.emit("task_started", {"task_id": task_id, "type": task_type})
 
+            # Human-like delay before action
+            await action_delay()
 
-async def _reupload_media(url: str, project_id: str) -> str | None:
-    """Download image from URL and re-upload to get a fresh media_id."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    logger.warning("Re-upload: failed to download %s (status %d)", url[:60], resp.status)
-                    return None
-                image_bytes = await resp.read()
-                content_type = resp.headers.get("Content-Type", "image/jpeg")
+            # Dispatch to handler
+            result = await self._dispatch(task_type, payload, task, fb_uid=fb_uid,
+                                          strategy=strategy)
 
-        if not content_type.startswith("image/"):
-            logger.warning("Re-upload: unexpected content-type %s from %s", content_type, url[:60])
-            return None
-        image_b64 = base64.b64encode(image_bytes).decode()
-        mime = content_type.split(";")[0].strip()
+            if result.get("error"):
+                raise Exception(result["error"])
 
-        client = get_flow_client()
-        result = await client.upload_image(image_b64, mime_type=mime, project_id=project_id)
-        new_mid = result.get("_mediaId")
-        if new_mid:
-            logger.info("Re-upload OK: fresh media_id=%s", new_mid[:20])
-            return new_mid
-        logger.warning("Re-upload: no media_id in response: %s", str(result)[:200])
-    except Exception as e:
-        logger.warning("Re-upload failed: %s", e)
-    return None
+            # Success
+            duration_ms = int(datetime.utcnow().timestamp() * 1000) - started_at_ms
+            await crud.update_task(
+                task_id,
+                status="COMPLETED",
+                completed_at=datetime.utcnow().isoformat(),
+                result=json.dumps(result),
+            )
 
+            # Record structured trace (AutoBrowse pattern)
+            await crud.create_trace(
+                task_id=task_id,
+                task_type=task_type,
+                status="SUCCESS",
+                account_id=task.get("account_id"),
+                duration_ms=duration_ms,
+                strategy_id=strategy_id,
+            )
+            # Update strategy success count
+            if strategy:
+                await crud.record_strategy_outcome(
+                    task_type,
+                    strategy.get("url_pattern", strategy_url),
+                    success=True,
+                )
 
-async def _recover_entity_not_found(req: dict) -> bool:
-    """When Google returns 'entity not found', re-upload the image to get a fresh media_id."""
-    req_type = req.get("type", "")
-    pid = req.get("project_id", "")
-    orientation = await _resolve_orientation(req)
-    prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
+            # Log activity
+            if task.get("account_id"):
+                await crud.log_activity(task["account_id"], task_type,
+                                        f"Task {task_id[:8]} completed")
 
-    # Scene-based requests: re-upload scene image
-    if req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS", "UPSCALE_VIDEO"):
-        scene = await crud.get_scene(req.get("scene_id"))
-        if not scene:
-            return False
-        url = scene.get(f"{prefix}_image_url")
-        if not url:
-            return False
-        new_mid = await _reupload_media(url, pid)
-        if new_mid:
-            await crud.update_scene(scene["id"], **{f"{prefix}_image_media_id": new_mid})
-            logger.info("Recovered scene %s: new %s_image_media_id=%s", scene["id"][:12], prefix, new_mid[:12])
-            return True
+            session.record_action()
+            await event_bus.emit("task_completed", {"task_id": task_id, "type": task_type})
 
-    # Character-based requests: re-upload ref image
-    if req_type in ("EDIT_CHARACTER_IMAGE",):
-        char = await crud.get_character(req.get("character_id"))
-        if not char:
-            return False
-        url = char.get("reference_image_url")
-        if not url:
-            return False
-        new_mid = await _reupload_media(url, pid)
-        if new_mid:
-            await crud.update_character(char["id"], media_id=new_mid)
-            logger.info("Recovered character %s: new media_id=%s", char["id"][:12], new_mid[:12])
-            return True
+            # Telegram notification (non-blocking)
+            notifier = get_notifier()
+            asyncio.create_task(notifier.notify_task_completed(task))
 
-    return False
+            logger.info("Task %s (%s) completed in %dms", task_id[:8], task_type, duration_ms)
 
+        except Exception as e:
+            logger.error("Task %s (%s) failed: %s", task_id[:8], task_type, e)
+            duration_ms = int(datetime.utcnow().timestamp() * 1000) - started_at_ms
+            retry_count = task.get("retry_count", 0) + 1
+            max_retries = task.get("max_retries", MAX_RETRIES)
 
-async def _handle_failure(rid: str, req: dict, result: dict, retry_after: dict = None):
-    error_msg = result.get("error")
-    if not error_msg:
-        data = result.get("data", {})
-        if isinstance(data, dict):
-            ef = data.get("error", "Unknown error")
-            if isinstance(ef, dict):
-                error_msg = ef.get("message", json.dumps(ef)[:200])
-                # Extract detailed reason from error details (e.g. PUBLIC_ERROR_UNSAFE_GENERATION)
-                details = ef.get("details", [])
-                if details and isinstance(details, list):
-                    for d in details:
-                        reason = d.get("reason") if isinstance(d, dict) else None
-                        if reason:
-                            error_msg = f"{error_msg} [{reason}]"
-                            break
+            error_message = str(e)[:500]
+            error_class = _classify_error(error_message)
+
+            # Record structured trace for failure (AutoBrowse pattern)
+            await crud.create_trace(
+                task_id=task_id,
+                task_type=task_type,
+                status="FAILURE",
+                account_id=task.get("account_id"),
+                duration_ms=duration_ms,
+                error_detail=error_message,
+                strategy_id=strategy_id,
+            )
+            # Update strategy fail count
+            if strategy:
+                await crud.record_strategy_outcome(
+                    task_type,
+                    strategy.get("url_pattern", strategy_url),
+                    success=False,
+                )
+
+            # Auto-learn: record error as a workaround hint for future runs
+            await crud.upsert_strategy(
+                task_type=task_type,
+                url_pattern=strategy_url,
+                workarounds=[{
+                    "error": error_message[:200],
+                    "error_class": error_class,
+                    "recorded_at": datetime.utcnow().isoformat(),
+                }],
+            )
+
+            if error_class == "RETRYABLE" and retry_count < max_retries:
+                delay_s = _next_retry_delay_s(retry_count)
+                scheduled_at = datetime.utcfromtimestamp(
+                    datetime.utcnow().timestamp() + delay_s
+                ).isoformat()
+                await crud.update_task(
+                    task_id,
+                    status="PENDING",
+                    retry_count=retry_count,
+                    scheduled_at=scheduled_at,
+                    error_message=error_message,
+                )
+                logger.info(
+                    "Task %s retry scheduled in %ss (%d/%d)",
+                    task_id[:8],
+                    delay_s,
+                    retry_count,
+                    max_retries,
+                )
             else:
-                error_msg = str(ef)
+                await crud.update_task(
+                    task_id,
+                    status="FAILED",
+                    completed_at=datetime.utcnow().isoformat(),
+                    error_message=error_message,
+                )
+                await event_bus.emit(
+                    "task_failed",
+                    {
+                        "task_id": task_id,
+                        "error": error_message[:200],
+                        "error_class": error_class,
+                    },
+                )
+
+                # Telegram alert for permanent failures
+                notifier = get_notifier()
+                asyncio.create_task(notifier.notify_task_failed(task, error_message))
+
+        finally:
+            self._active_count -= 1
+
+    async def _dispatch(self, task_type: str, payload: dict, task: dict,
+                        fb_uid: str | None = None,
+                        strategy: dict | None = None) -> dict:
+        """Dispatch task to the appropriate FBClient method.
+
+        fb_uid routes the command to the correct extension session.
+        strategy provides learned hints (selectors, wait times, workarounds)
+        that the extension can use to improve reliability.
+        If None, falls back to any connected extension.
+        """
+        client = get_fb_client()
+
+        strategy_hints = None
+        if strategy:
+            strategy_hints = {
+                "selectors": strategy.get("selectors"),
+                "wait_strategies": strategy.get("wait_strategies"),
+                "workarounds": strategy.get("workarounds"),
+            }
+        payload = enforce_payload(task_type, payload)
+        dry_run = dry_run_from_payload(payload)
+
+        if task_type == "CHECK_LOGIN":
+            return await client.check_login(fb_uid=fb_uid)
+
+        elif task_type == "POST_TEXT":
+            return await client.post_text(
+                content=payload.get("content", ""),
+                target_type=payload.get("targetType", "TIMELINE"),
+                target_id=payload.get("targetId"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "POST_LINK":
+            content = payload.get("content", "")
+            link_url = payload.get("linkUrl") or payload.get("url") or payload.get("link")
+            if link_url:
+                content = f"{content}\n{link_url}" if content else link_url
+            return await client.post_text(
+                content=content,
+                target_type=payload.get("targetType", "TIMELINE"),
+                target_id=payload.get("targetId"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type in ("POST_IMAGE", "POST_VIDEO"):
+            return await client.post_with_media(
+                content=payload.get("content", ""),
+                media_paths=payload.get("mediaPaths", []),
+                target_type=payload.get("targetType", "TIMELINE"),
+                target_id=payload.get("targetId"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "POST_STORY":
+            return await client.post_with_media(
+                content=payload.get("content", ""),
+                media_paths=payload.get("mediaPaths", []),
+                target_type="STORY",
+                target_id=payload.get("targetId"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "POST_REEL":
+            return await client.post_with_media(
+                content=payload.get("content", ""),
+                media_paths=payload.get("mediaPaths", []),
+                target_type="REEL",
+                target_id=payload.get("targetId"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "SEND_MESSAGE":
+            return await client.send_message(
+                recipient_name=payload.get("recipientName", ""),
+                content=payload.get("content", ""),
+                recipient_uid=payload.get("recipientUid"),
+                media_path=payload.get("mediaPath"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "SEND_BULK_MESSAGE":
+            recipients = _bulk_recipients_from_payload(payload)
+            content = payload.get("content", "")
+            media_path = payload.get("mediaPath")
+            results = []
+            for recipient in recipients:
+                r = await client.send_message(
+                    recipient_name=recipient.get("name", ""),
+                    content=content,
+                    recipient_uid=recipient.get("uid"),
+                    media_path=media_path,
+                    fb_uid=fb_uid,
+                    strategy=strategy_hints,
+                    dry_run=dry_run,
+                )
+                results.append(r)
+                if r.get("error"):
+                    logger.warning("Bulk msg to %s failed: %s",
+                                   recipient.get("name"), r["error"])
+                await long_delay()
+            sent = sum(1 for r in results if r.get("success"))
+            return {
+                "success": True,
+                "message": f"Bulk message: {sent}/{len(recipients)} sent",
+                "details": results,
+            }
+
+        elif task_type == "LIKE_POST":
+            return await client.like_post(
+                post_url=payload.get("postUrl", ""),
+                reaction=payload.get("reaction", "LIKE"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "COMMENT_POST":
+            return await client.comment_post(
+                post_url=payload.get("postUrl", ""),
+                comment=payload.get("comment", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "SHARE_POST":
+            return await client.share_post(
+                post_url=payload.get("postUrl", ""),
+                comment=payload.get("comment", ""),
+                target_type=payload.get("targetType", "TIMELINE"),
+                target_id=payload.get("targetId"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "ADD_FRIEND":
+            return await client.add_friend(
+                profile_url=payload.get("profileUrl", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "ACCEPT_FRIEND":
+            return await client.accept_friend(
+                request_url=payload.get("requestUrl"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "JOIN_GROUP":
+            return await client.join_group(
+                group_url=payload.get("groupUrl", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "LEAVE_GROUP":
+            return await client.leave_group(
+                group_url=payload.get("groupUrl", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "FOLLOW_PAGE":
+            return await client.follow_page(
+                page_url=payload.get("pageUrl", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "UNFOLLOW_PAGE":
+            return await client.unfollow_page(
+                page_url=payload.get("pageUrl", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
+        elif task_type == "SCRAPE_PROFILE":
+            return await client.scrape_profile(
+                profile_url=payload.get("profileUrl", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+            )
+
+        elif task_type == "SCRAPE_GROUP":
+            return await client.scrape_group(
+                group_url=payload.get("groupUrl", ""),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+            )
+
+        elif task_type == "REUP_VIDEO":
+            from agent.services.downloader import download_video
+            source_url = payload.get("sourceUrl")
+            if not source_url:
+                return {"error": "sourceUrl is required for REUP_VIDEO"}
+            if dry_run:
+                return {
+                    "success": True,
+                    "dryRun": True,
+                    "action": "reup_video",
+                    "message": "Dry run: would download and post video",
+                    "sourceUrl": source_url,
+                }
+            metadata = await download_video(source_url, task["id"])
+            return await client.post_with_media(
+                content=payload.get("content", metadata.get("title", "")),
+                media_paths=[metadata["local_path"]],
+                target_type="REEL",
+                target_id=payload.get("targetId"),
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+                dry_run=dry_run,
+            )
+
         else:
-            error_msg = "Unknown error"
-    if isinstance(error_msg, dict):
-        error_msg = json.dumps(error_msg)[:200]
-
-    # Auto-recover expired media by re-uploading
-    if "not found" in str(error_msg).lower():
-        recovered = await _recover_entity_not_found(req)
-        if recovered:
-            logger.info("Request %s: recovered expired media, retrying", rid[:8])
-            await crud.update_request(rid, status="PENDING", error_message=f"recovered: {error_msg}")
-            return
-
-    error_lower = str(error_msg).lower()
-
-    # WS transient errors (extension disconnect/reconnect): retry without incrementing count
-    if "extension reconnected" in error_lower or "extension disconnected" in error_lower or "extension not connected" in error_lower:
-        await crud.update_request(rid, status="PENDING", error_message=str(error_msg))
-        logger.info("Request %s transient WS error, will retry (no retry increment): %s", rid[:8], error_msg)
-        return
-
-    # reCAPTCHA errors: retry up to 10 times — deferred dict in main loop handles delay
-    if "captcha" in error_lower or "recaptcha" in error_lower:
-        retry = req.get("retry_count", 0) + 1
-        if retry < 10:
-            await crud.update_request(rid, status="PENDING", retry_count=retry, error_message=str(error_msg))
-            logger.warning("Request %s reCAPTCHA failed (retry %d/10), will retry", rid[:8], retry)
-            return
-        else:
-            await crud.update_request(rid, status="FAILED", error_message=str(error_msg))
-            await _mark_scene_failed(req)
-            logger.error("Request %s FAILED after 10 reCAPTCHA retries: %s", rid[:8], error_msg)
-            return
-
-    retry = req.get("retry_count", 0) + 1
-    if retry < MAX_RETRIES:
-        now = time.time()
-        if retry_after is not None:
-            ra = retry_after.get(rid, 0.0)
-            if ra > now:
-                # Still in backoff — reset to PENDING so it's not stuck in PROCESSING
-                await crud.update_request(rid, status="PENDING", error_message=str(error_msg))
-                return
-            retry_after[rid] = now + min(2 ** retry * 10, 300)
-        await crud.update_request(rid, status="PENDING", retry_count=retry, error_message=str(error_msg))
-        logger.warning("Request %s failed (retry %d/%d): %s", rid[:8], retry, MAX_RETRIES, error_msg)
-    else:
-        await crud.update_request(rid, status="FAILED", error_message=str(error_msg))
-        await _mark_scene_failed(req)
-        logger.error("Request %s FAILED permanently: %s", rid[:8], error_msg)
+            return {"error": f"Unknown task type: {task_type}"}
 
 
-async def _mark_scene_failed(req: dict):
-    scene_id = req.get("scene_id")
-    if not scene_id:
-        return
-    orientation = await _resolve_orientation(req)
-    prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
-    req_type = req["type"]
-    updates = {}
-    if req_type in ("GENERATE_IMAGE", "REGENERATE_IMAGE", "EDIT_IMAGE"):
-        updates[f"{prefix}_image_status"] = "FAILED"
-    elif req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS"):
-        updates[f"{prefix}_video_status"] = "FAILED"
-    elif req_type == "UPSCALE_VIDEO":
-        updates[f"{prefix}_upscale_status"] = "FAILED"
-    if updates:
-        await crud.update_scene(scene_id, **updates)
-
-
-async def _is_already_completed(req: dict, orientation: str) -> bool:
-    scene_id = req.get("scene_id")
-    req_type = req.get("type", "")
-    if not scene_id or req_type == "GENERATE_CHARACTER_IMAGE":
-        return False
-    scene = await crud.get_scene(scene_id)
-    if not scene:
-        return False
-    prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
-    if req_type in ("EDIT_IMAGE", "REGENERATE_IMAGE", "REGENERATE_VIDEO", "REGENERATE_CHARACTER_IMAGE", "EDIT_CHARACTER_IMAGE"):
-        return False  # Always run — explicitly requesting new generation
-    if req_type == "GENERATE_IMAGE":
-        return scene.get(f"{prefix}_image_status") == "COMPLETED"
-    if req_type in ("GENERATE_VIDEO", "GENERATE_VIDEO_REFS"):
-        return scene.get(f"{prefix}_video_status") == "COMPLETED"
-    if req_type == "UPSCALE_VIDEO":
-        return scene.get(f"{prefix}_upscale_status") == "COMPLETED"
-    return False
-
-
-# ─── Module-level controller ──────────────────────────────────
+# ─── Singleton ──────────────────────────────────────────────
 
 _controller: WorkerController | None = None
 

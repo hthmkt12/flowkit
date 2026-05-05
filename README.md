@@ -168,6 +168,11 @@ API_HOST=0.0.0.0
 API_PORT=8100
 WS_HOST=0.0.0.0
 WS_PORT=9222
+API_AUTH_ENABLED=true
+API_KEY=replace-with-strong-random-secret
+WS_AUTH_ENABLED=true
+WS_API_KEY=replace-with-strong-random-secret
+DATA_ENCRYPTION_KEY=replace-with-32-byte-secret-material
 ```
 
 ### Local SSH tunnel

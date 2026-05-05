@@ -1,1 +1,1 @@
-# api
+"""FBKit — API package."""
