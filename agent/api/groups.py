@@ -6,6 +6,7 @@ from typing import Optional
 
 from agent.db import crud
 from agent.db.schema import get_db
+from agent.services.safety_gate import enforce_payload
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -107,7 +108,7 @@ async def delete_group(group_id: str):
 @router.post("/join")
 async def join_group(body: GroupAction):
     """Create a task to join a Facebook group."""
-    payload = {"groupUrl": body.group_url}
+    payload = enforce_payload("JOIN_GROUP", {"groupUrl": body.group_url})
     task = await crud.create_task(
         account_id=body.account_id,
         task_type="JOIN_GROUP",
@@ -119,7 +120,7 @@ async def join_group(body: GroupAction):
 @router.post("/leave")
 async def leave_group(body: GroupAction):
     """Create a task to leave a Facebook group."""
-    payload = {"groupUrl": body.group_url}
+    payload = enforce_payload("LEAVE_GROUP", {"groupUrl": body.group_url})
     task = await crud.create_task(
         account_id=body.account_id,
         task_type="LEAVE_GROUP",

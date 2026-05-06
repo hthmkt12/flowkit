@@ -19,7 +19,7 @@ from agent.services.fb_client import get_fb_client
 from agent.services.human_delay import action_delay, long_delay, get_session_manager
 from agent.services.event_bus import event_bus
 from agent.services.notifier import get_notifier
-from agent.services.safety_gate import dry_run_from_payload, enforce_payload
+from agent.services.safety_gate import dry_run_from_payload, enforce_payload, is_mutating_task
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +250,9 @@ class WorkerController:
             await crud.update_task(task_id, status="PROCESSING",
                                    started_at=datetime.utcnow().isoformat())
             await event_bus.emit("task_started", {"task_id": task_id, "type": task_type})
+
+            if is_mutating_task(task_type) and not is_dry_run and not fb_uid:
+                raise ValueError("Validation: fb_uid required for live mutating task")
 
             # Human-like delay before action
             await action_delay()

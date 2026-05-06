@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from agent.db import crud
+from agent.services.safety_gate import enforce_payload
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -67,6 +68,7 @@ async def create_message(body: MessageCreate):
             "content": body.content,
             "mediaPath": body.media_path,
         }
+        payload = enforce_payload("SEND_MESSAGE", payload)
         await crud.create_task(
             account_id=body.account_id,
             task_type="SEND_MESSAGE",
@@ -99,6 +101,7 @@ async def create_bulk_messages(body: BulkMessageCreate):
             "content": body.content,
             "mediaPath": body.media_path,
         }
+        payload = enforce_payload("SEND_BULK_MESSAGE", payload)
         await crud.create_task(
             account_id=body.account_id,
             task_type="SEND_BULK_MESSAGE",

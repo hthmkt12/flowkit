@@ -44,8 +44,8 @@ class FBClient:
     """Routes automation commands to Chrome extension(s) via WebSocket.
 
     Supports multiple concurrent extension sessions (multi-account).
-    Commands are routed to the session matching the target fb_uid.
-    Falls back to any connected session if fb_uid is not specified.
+    Commands with a target fb_uid require an exact matching session.
+    Commands without a target fb_uid fall back to any connected session.
     """
 
     def __init__(self):
@@ -90,7 +90,7 @@ class FBClient:
             )
 
     def get_session_for(self, fb_uid: Optional[str] = None) -> Optional[ExtensionSession]:
-        """Get the session for a specific fb_uid, or any active session."""
+        """Get an exact fb_uid session, or any session only when no fb_uid is requested."""
         if not self._sessions:
             return None
         if fb_uid:
@@ -98,7 +98,8 @@ class FBClient:
             for session in self._sessions.values():
                 if session.fb_uid == fb_uid:
                     return session
-            logger.warning("No extension session for fb_uid=%s, falling back to any", fb_uid)
+            logger.warning("No extension session for fb_uid=%s", fb_uid)
+            return None
         # Fallback: first available session
         return next(iter(self._sessions.values()), None)
 

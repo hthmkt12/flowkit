@@ -8,10 +8,16 @@ This summary is based on `repomix-output.xml` generated from these verified file
 
 - `agent/api/posts.py`
 - `agent/api/tasks.py`
+- `agent/api/groups.py`
+- `agent/api/messages.py`
 - `agent/services/safety_gate.py`
+- `agent/services/auto_seed.py`
+- `agent/services/fb_client.py`
 - `agent/services/scheduler.py`
 - `agent/worker/processor.py`
+- `extension/content-fb.js`
 - `tests/unit/test_safety_gate.py`
+- `tests/unit/test_extension_dry_run.py`
 - existing Markdown files under `docs/`
 - `README.md`
 
@@ -68,6 +74,11 @@ Safety Gate enforcement is applied before direct task creation in these verified
 | `POST /tasks/engage` | `agent/api/tasks.py` | Enforces LIKE/COMMENT/SHARE payload before task creation |
 | `POST /posts` with `auto_queue=true` and no `scheduled_at` | `agent/api/posts.py` | Builds `POST_{post_type}` payload, enforces it, then creates task |
 | `POST /posts/reup` | `agent/api/posts.py` | Enforces `REUP_VIDEO` payload before task creation |
+| `POST /groups/join` | `agent/api/groups.py` | Enforces `JOIN_GROUP` payload before task creation |
+| `POST /groups/leave` | `agent/api/groups.py` | Enforces `LEAVE_GROUP` payload before task creation |
+| `POST /messages` with `auto_queue=true` and no `scheduled_at` | `agent/api/messages.py` | Enforces `SEND_MESSAGE` payload before task creation |
+| `POST /messages/bulk` with `auto_queue=true` | `agent/api/messages.py` | Enforces `SEND_BULK_MESSAGE` payload before task creation |
+| Auto-seeding campaign action | `agent/services/auto_seed.py` | Enforces LIKE/COMMENT/SHARE payload before task creation |
 | Scheduler post enqueue | `agent/services/scheduler.py` | Enforces scheduled post payload before task creation |
 | Scheduler message enqueue | `agent/services/scheduler.py` | Enforces scheduled message payload before task creation |
 | Worker task claim | `agent/db/crud.py`, `agent/worker/processor.py` | Moves one pending task to `PROCESSING` before async dispatch |
@@ -75,6 +86,10 @@ Safety Gate enforcement is applied before direct task creation in these verified
 | Worker dispatch | `agent/worker/processor.py` | Re-enforces payload immediately before client dispatch |
 
 Worker dispatch remains the final safety boundary before calling `FBClient` methods.
+
+Live mutating tasks require an account with a resolved `fb_uid` before dispatch. This prevents legacy or incomplete account records from falling back to an arbitrary connected Chrome extension session. Dry-run and read-only tasks can still use fallback routing when no `fb_uid` is requested.
+
+`FBClient` routing is exact-match when a `fb_uid` is provided. It only falls back to any connected session when the caller omits `fb_uid`.
 
 Scheduler enqueue claims scheduled posts/messages before creating tasks, so repeated enqueue attempts for the same item do not create duplicate tasks.
 
@@ -124,6 +139,10 @@ Verified in `agent/config.py`:
 - server approval logs `APPROVE_TASK` activity after success
 - server approval rejects malformed task payload JSON with a controlled error
 - `/posts` auto-queue applies Safety Gate to `POST_LINK`
+- `/groups/join` and `/groups/leave` apply Safety Gate to group mutation tasks
+- `/groups/scrape` remains read-only and does not receive dry-run fields
+- `/messages` and `/messages/bulk` auto-queue paths apply Safety Gate to message tasks
+- auto-seeding engagement task creation applies Safety Gate
 - scheduler enqueue applies Safety Gate to scheduled posts
 - reup video creation applies Safety Gate before task creation
 - scheduled post enqueue is idempotent after the first claim
@@ -138,6 +157,8 @@ Verified in `agent/config.py`:
 - successful dry-run tasks do not increment live daily counters
 - dry-run `REUP_VIDEO` returns before downloading external media
 - approved live tasks can set `dryRun=false` when live actions are enabled
+- `FBClient` does not fallback to another session when a requested `fb_uid` is missing
+- live mutating worker tasks fail closed when the task account has no `fb_uid`
 
 ## Documentation Impact Assessment
 

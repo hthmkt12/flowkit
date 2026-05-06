@@ -6,10 +6,13 @@ from datetime import date
 import pytest
 from fastapi import HTTPException
 
+from agent.api import groups as groups_api
+from agent.api import messages as messages_api
 from agent.api import posts as posts_api
 from agent.api import tasks as tasks_api
 from agent.db import crud
 from agent.services.fb_client import FBClient
+from agent.services.auto_seed import AutoSeeder, SeedCampaign
 from agent.services.scheduler import Scheduler
 from agent.worker import processor
 
@@ -308,6 +311,116 @@ async def test_create_reup_post_forces_task_to_dry_run(test_account, monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("api_call", "task_type"),
+    [
+        (groups_api.join_group, "JOIN_GROUP"),
+        (groups_api.leave_group, "LEAVE_GROUP"),
+    ],
+)
+async def test_group_action_apis_force_mutating_tasks_to_dry_run(api_call, task_type, test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+
+    task = await api_call(
+        groups_api.GroupAction(
+            account_id=test_account["id"],
+            group_url="https://facebook.com/groups/123",
+        )
+    )
+
+    payload = json.loads(task["payload"] or "{}")
+    assert task["task_type"] == task_type
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "live_actions_disabled"
+
+
+@pytest.mark.asyncio
+async def test_group_scrape_api_does_not_add_dry_run(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    task = await groups_api.scrape_group(
+        groups_api.GroupAction(
+            account_id=test_account["id"],
+            group_url="https://facebook.com/groups/123",
+        )
+    )
+
+    payload = json.loads(task["payload"] or "{}")
+    assert task["task_type"] == "SCRAPE_GROUP"
+    assert "dryRun" not in payload
+    assert "safetyReason" not in payload
+
+
+@pytest.mark.asyncio
+async def test_message_auto_queue_forces_send_message_to_dry_run(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+
+    await messages_api.create_message(
+        messages_api.MessageCreate(
+            account_id=test_account["id"],
+            recipient_name="Recipient",
+            content="Dry-run message only",
+            auto_queue=True,
+        )
+    )
+
+    tasks = await crud.list_tasks(account_id=test_account["id"], task_type="SEND_MESSAGE")
+    payload = json.loads(tasks[0]["payload"] or "{}")
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "live_actions_disabled"
+
+
+@pytest.mark.asyncio
+async def test_bulk_message_auto_queue_forces_task_to_dry_run(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+
+    await messages_api.create_bulk_messages(
+        messages_api.BulkMessageCreate(
+            account_id=test_account["id"],
+            recipients=[{"name": "A"}, {"name": "B"}],
+            content="Dry-run bulk message only",
+            auto_queue=True,
+        )
+    )
+
+    tasks = await crud.list_tasks(account_id=test_account["id"], task_type="SEND_BULK_MESSAGE")
+    payload = json.loads(tasks[0]["payload"] or "{}")
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "live_actions_disabled"
+
+
+@pytest.mark.asyncio
+async def test_auto_seeder_forces_engagement_task_to_dry_run(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+
+    campaign = SeedCampaign(
+        "campaign-1",
+        {
+            "name": "Safety campaign",
+            "accounts": [test_account["id"]],
+            "targets": ["https://facebook.com/post/123"],
+            "actions": ["LIKE"],
+            "delay_min": 0,
+            "delay_max": 0,
+        },
+    )
+
+    await AutoSeeder()._process_campaign(campaign)
+
+    tasks = await crud.list_tasks(account_id=test_account["id"], task_type="LIKE_POST")
+    payload = json.loads(tasks[0]["payload"] or "{}")
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "live_actions_disabled"
+
+
+@pytest.mark.asyncio
 async def test_worker_dispatch_forces_mutating_task_to_dry_run(monkeypatch):
     captured = {}
 
@@ -390,6 +503,40 @@ async def test_process_task_uses_server_dry_run_state_for_counter(test_account, 
 
     account = await crud.get_account(test_account["id"])
     assert account["daily_posts"] == 0
+
+
+@pytest.mark.asyncio
+async def test_process_task_blocks_live_mutation_without_account_fb_uid(db_ready, monkeypatch):
+    called = False
+
+    class FakeClient:
+        async def post_text(self, **kwargs):
+            nonlocal called
+            called = True
+            return {"success": True}
+
+    async def no_delay():
+        return None
+
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", False, raising=False)
+    monkeypatch.setattr(processor, "get_fb_client", lambda: FakeClient())
+    monkeypatch.setattr(processor, "action_delay", no_delay)
+
+    legacy_account = await crud.create_account("Legacy Account")
+    task = await crud.create_task(
+        account_id=legacy_account["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({"content": "must not route to fallback session"}),
+    )
+
+    await processor.WorkerController()._process_task(task)
+
+    stored_task = await crud.get_task(task["id"])
+    assert called is False
+    assert stored_task["status"] == "FAILED"
+    assert "fb_uid required" in stored_task["error_message"]
 
 
 @pytest.mark.asyncio
@@ -749,3 +896,12 @@ async def test_fb_client_sends_dry_run_to_relationship_group_page_actions(
     assert captured["fb_uid"] == "fb-1"
     assert captured["params"]["dryRun"] is True
     assert captured["params"][expected_url_key] == args[0]
+
+
+def test_fb_client_does_not_fallback_when_specific_uid_is_missing():
+    client = FBClient()
+    ws = object()
+    client.set_extension(ws)
+    client.update_session(ws, "connected-fb-uid", logged_in=True)
+
+    assert client.get_session_for("missing-fb-uid") is None

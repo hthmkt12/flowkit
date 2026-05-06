@@ -16,6 +16,7 @@ from typing import Optional
 
 from agent.db import crud
 from agent.services.event_bus import event_bus
+from agent.services.safety_gate import enforce_payload
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,7 @@ class AutoSeeder:
                 await crud.create_task(
                     account_id=account_id,
                     task_type=task_type,
-                    payload=json.dumps(payload),
+                    payload=json.dumps(enforce_payload(task_type, payload)),
                     ref_id=campaign.id,
                 )
                 campaign.stats["total"] += 1
