@@ -61,3 +61,161 @@ def test_completed_task_requires_dry_run_result():
         "status": "COMPLETED",
         "result": '{"success": true, "dryRun": false}',
     }) is False
+
+
+def test_run_smoke_returns_2_when_no_logged_in_extension(monkeypatch):
+    script = _load_script()
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        assert api_key == "test-key"
+        assert path == "/api/status"
+        return {"extension": {"sessions": []}}
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "hello", "test-key", 1) == 2
+
+
+def test_run_smoke_uses_existing_account_and_completes(monkeypatch, capsys):
+    script = _load_script()
+    calls = []
+    task = {
+        "id": "task-1",
+        "status": "COMPLETED",
+        "result": '{"success": true, "dryRun": true}',
+    }
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        calls.append((path, method, body, api_key))
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-1"}]}}
+        if path == "/api/accounts" and method == "GET":
+            return [{"id": "account-1", "fb_uid": "fb-1"}]
+        if path == "/api/tasks" and method == "POST":
+            assert body == script.build_task_payload("account-1", "hello")
+            return {"id": "task-1"}
+        if path == "/api/tasks/task-1":
+            return task
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "hello", "test-key", 1) == 0
+    assert ("/api/accounts", "POST", {"name": "Smoke Dry Run Account", "fb_uid": "fb-1", "notes": "Created by scripts/fbkit-dry-run-smoke.py"}, "test-key") not in calls
+    assert all(call[3] == "test-key" for call in calls)
+    assert '"ok": true' in capsys.readouterr().out
+
+
+def test_run_smoke_creates_account_when_missing(monkeypatch):
+    script = _load_script()
+    created_account_body = None
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        nonlocal created_account_body
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-2"}]}}
+        if path == "/api/accounts" and method == "GET":
+            return []
+        if path == "/api/accounts" and method == "POST":
+            created_account_body = body
+            return {"id": "account-2"}
+        if path == "/api/tasks" and method == "POST":
+            assert body["account_id"] == "account-2"
+            return {"id": "task-2"}
+        if path == "/api/tasks/task-2":
+            return {"id": "task-2", "status": "COMPLETED", "result": '{"success": true, "dryRun": true}'}
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "hello", None, 1) == 0
+    assert created_account_body == {
+        "name": "Smoke Dry Run Account",
+        "fb_uid": "fb-2",
+        "notes": "Created by scripts/fbkit-dry-run-smoke.py",
+    }
+
+
+def test_run_smoke_returns_3_for_terminal_failure(monkeypatch):
+    script = _load_script()
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-3"}]}}
+        if path == "/api/accounts":
+            return [{"id": "account-3", "fb_uid": "fb-3"}]
+        if path == "/api/tasks" and method == "POST":
+            return {"id": "task-3"}
+        if path == "/api/tasks/task-3":
+            return {"id": "task-3", "status": "FAILED", "result": "{}"}
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "hello", None, 1) == 3
+
+
+def test_run_smoke_returns_3_for_terminal_cancelled(monkeypatch):
+    script = _load_script()
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-5"}]}}
+        if path == "/api/accounts":
+            return [{"id": "account-5", "fb_uid": "fb-5"}]
+        if path == "/api/tasks" and method == "POST":
+            return {"id": "task-5"}
+        if path == "/api/tasks/task-5":
+            return {"id": "task-5", "status": "CANCELLED", "result": "{}"}
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "hello", None, 1) == 3
+
+
+def test_run_smoke_returns_3_for_completed_non_dry_run(monkeypatch):
+    script = _load_script()
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-6"}]}}
+        if path == "/api/accounts":
+            return [{"id": "account-6", "fb_uid": "fb-6"}]
+        if path == "/api/tasks" and method == "POST":
+            return {"id": "task-6"}
+        if path == "/api/tasks/task-6":
+            return {"id": "task-6", "status": "COMPLETED", "result": '{"success": true, "dryRun": false}'}
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "hello", None, 1) == 3
+
+
+def test_run_smoke_returns_3_on_timeout(monkeypatch):
+    script = _load_script()
+    now = {"value": 100.0}
+
+    def fake_time():
+        return now["value"]
+
+    def fake_sleep(seconds):
+        now["value"] += seconds
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-4"}]}}
+        if path == "/api/accounts":
+            return [{"id": "account-4", "fb_uid": "fb-4"}]
+        if path == "/api/tasks" and method == "POST":
+            return {"id": "task-4"}
+        if path == "/api/tasks/task-4":
+            return {"id": "task-4", "status": "PROCESSING", "result": "{}"}
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+    monkeypatch.setattr(script.time, "time", fake_time)
+    monkeypatch.setattr(script.time, "sleep", fake_sleep)
+
+    assert script.run_smoke("http://agent", "hello", None, 3) == 3
