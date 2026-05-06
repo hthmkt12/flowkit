@@ -15,6 +15,23 @@
 
 // ─── Utility Helpers ────────────────────────────────────────
 
+const EXTENSION_LIVE_ACTIONS_ENABLED = false;
+// Keep every mutating router method here so live-disabled mode blocks before handler dispatch.
+const MUTATING_METHODS = new Set([
+  "post_text",
+  "post_with_media",
+  "send_message",
+  "like_post",
+  "comment_post",
+  "share_post",
+  "add_friend",
+  "accept_friend",
+  "join_group",
+  "leave_group",
+  "follow_page",
+  "unfollow_page",
+]);
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -134,6 +151,10 @@ function isDryRun(params) {
   return params?.dryRun === true || params?.dryRun === "true";
 }
 
+function shouldForceExtensionDryRun(params) {
+  return !EXTENSION_LIVE_ACTIONS_ENABLED && !isDryRun(params);
+}
+
 function dryRunResult(action, details = {}) {
   const element = details.element || null;
   return {
@@ -144,8 +165,16 @@ function dryRunResult(action, details = {}) {
     wouldClick: details.wouldClick || false,
     elementFound: Boolean(element || details.elementFound),
     selectorUsed: details.selectorUsed || null,
+    safetyReason: details.safetyReason || null,
     url: window.location.href,
   };
+}
+
+function extensionSafetyDryRunResult(action, details = {}) {
+  return dryRunResult(action, {
+    ...details,
+    safetyReason: "extension_live_actions_disabled",
+  });
 }
 
 // ─── Command Handlers ───────────────────────────────────────
@@ -159,6 +188,13 @@ async function handlePostText(params) {
 
   if (isDryRun(params)) {
     return dryRunResult("post_text", {
+      wouldClick: "composer and post button",
+      selectorUsed: "post composer",
+    });
+  }
+
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("post_text", {
       wouldClick: "composer and post button",
       selectorUsed: "post composer",
     });
@@ -248,6 +284,13 @@ async function handleSendMessage(params) {
 
   if (isDryRun(params)) {
     return dryRunResult("send_message", {
+      wouldClick: "message input and Enter send",
+      selectorUsed: "messenger message input",
+    });
+  }
+
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("send_message", {
       wouldClick: "message input and Enter send",
       selectorUsed: "messenger message input",
     });
@@ -345,6 +388,13 @@ async function handleLikePost(params) {
     });
   }
 
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("like_post", {
+      wouldClick: reaction && reaction !== 'LIKE' ? "reaction button" : "like button",
+      selectorUsed: "post like button",
+    });
+  }
+
   try {
     if (postUrl) {
       window.location.href = postUrl;
@@ -435,6 +485,13 @@ async function handleCommentPost(params) {
     });
   }
 
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("comment_post", {
+      wouldClick: "comment input and Enter submit",
+      selectorUsed: "comment input",
+    });
+  }
+
   try {
     if (postUrl) {
       window.location.href = postUrl;
@@ -514,6 +571,13 @@ async function handleAddFriend(params) {
 
   if (isDryRun(params)) {
     return dryRunResult("add_friend", {
+      wouldClick: "add friend button",
+      selectorUsed: "add friend button",
+    });
+  }
+
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("add_friend", {
       wouldClick: "add friend button",
       selectorUsed: "add friend button",
     });
@@ -608,6 +672,13 @@ async function handlePostWithMedia(params) {
 
   if (isDryRun(params)) {
     return dryRunResult("post_with_media", {
+      wouldClick: targetType === 'REEL' ? "reel file upload and publish" : "composer and media upload",
+      selectorUsed: targetType === 'REEL' ? "reel file input" : "media post composer",
+    });
+  }
+
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("post_with_media", {
       wouldClick: targetType === 'REEL' ? "reel file upload and publish" : "composer and media upload",
       selectorUsed: targetType === 'REEL' ? "reel file input" : "media post composer",
     });
@@ -863,6 +934,13 @@ async function handleSharePost(params) {
     });
   }
 
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("share_post", {
+      wouldClick: "share button",
+      selectorUsed: "share button",
+    });
+  }
+
   try {
     if (postUrl) {
       window.location.href = postUrl;
@@ -967,6 +1045,13 @@ async function handleAcceptFriend(params) {
     });
   }
 
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("accept_friend", {
+      wouldClick: "confirm friend request button",
+      selectorUsed: "friend confirm button",
+    });
+  }
+
   try {
     // Navigate to friend requests page
     window.location.href = "https://www.facebook.com/friends/requests";
@@ -1010,6 +1095,13 @@ async function handleJoinGroup(params) {
 
   if (isDryRun(params)) {
     return dryRunResult("join_group", {
+      wouldClick: "join group button",
+      selectorUsed: "join group button",
+    });
+  }
+
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("join_group", {
       wouldClick: "join group button",
       selectorUsed: "join group button",
     });
@@ -1078,6 +1170,13 @@ async function handleLeaveGroup(params) {
 
   if (isDryRun(params)) {
     return dryRunResult("leave_group", {
+      wouldClick: "joined menu and leave confirmation",
+      selectorUsed: "joined button",
+    });
+  }
+
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("leave_group", {
       wouldClick: "joined menu and leave confirmation",
       selectorUsed: "joined button",
     });
@@ -1155,6 +1254,13 @@ async function handleFollowPage(params) {
     });
   }
 
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("follow_page", {
+      wouldClick: "follow button",
+      selectorUsed: "follow button",
+    });
+  }
+
   try {
     if (pageUrl) {
       window.location.href = pageUrl;
@@ -1198,6 +1304,13 @@ async function handleUnfollowPage(params) {
 
   if (isDryRun(params)) {
     return dryRunResult("unfollow_page", {
+      wouldClick: "following menu and unfollow option",
+      selectorUsed: "following button",
+    });
+  }
+
+  if (shouldForceExtensionDryRun(params)) {
+    return extensionSafetyDryRunResult("unfollow_page", {
       wouldClick: "following menu and unfollow option",
       selectorUsed: "following button",
     });
@@ -1358,6 +1471,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle async methods
   (async () => {
     let result;
+
+    if (MUTATING_METHODS.has(method) && shouldForceExtensionDryRun(params)) {
+      sendResponse(extensionSafetyDryRunResult(method, {
+        wouldClick: "blocked before handler dispatch",
+        selectorUsed: "message router",
+      }));
+      return;
+    }
 
     switch (method) {
       case "post_text":

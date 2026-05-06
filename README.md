@@ -2,7 +2,7 @@
 
 This repository currently runs **FBKit**, a local-first Facebook automation assistant built from the original FlowKit codebase. It uses a Python FastAPI agent, SQLite task queue, and a Chrome extension WebSocket bridge to run Facebook tasks through a logged-in browser session.
 
-> **Safety default:** FBKit is dry-run first. Real mutating Facebook actions are disabled by default and require explicit server-side approval before live dispatch.
+> **Safety default:** FBKit is dry-run first. Real mutating Facebook actions are disabled by default at both the server Safety Gate and the Chrome extension DOM-action layer.
 
 ## Current FBKit Quick Start
 
@@ -111,7 +111,8 @@ Additional protections:
 - live quota is reserved before live dispatch and skipped for dry-run tasks
 - `FBClient` requires exact `fb_uid` routing when a task targets a specific Facebook account
 - live mutating worker tasks fail closed if the account has no resolved `fb_uid`
-- extension mutating handlers return before navigation/click/type/file-upload when `dryRun=true`
+- extension mutating handlers return before navigation/click/type/file-upload when `dryRun=true` or when `EXTENSION_LIVE_ACTIONS_ENABLED=false`
+- extension-local live-action guard forces dry-run with `safetyReason: "extension_live_actions_disabled"`, independent of server payload approval
 
 ## Live Action Warning
 
@@ -123,7 +124,8 @@ Before any live test:
 2. Keep `LIVE_ACTIONS_ENABLED=false` until dry-run smoke tests pass.
 3. Start with one low-risk post task.
 4. Approve it through the server approval endpoint only after reviewing the payload.
-5. Do not live-test inbox/comment/engagement automation until the posting flow is proven safe.
+5. Confirm the extension-side `EXTENSION_LIVE_ACTIONS_ENABLED` guard has been intentionally changed for a controlled test; otherwise the extension still forces dry-run.
+6. Do not live-test inbox/comment/engagement automation until the posting flow is proven safe.
 
 ## Legacy FlowKit Documentation
 
