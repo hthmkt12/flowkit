@@ -4,6 +4,15 @@ This repository currently runs **FBKit**, a local-first Facebook automation assi
 
 > **Safety default:** FBKit is dry-run first. Real mutating Facebook actions are disabled by default at both the server Safety Gate and the Chrome extension DOM-action layer.
 
+## Documentation Map
+
+Use the README in two parts:
+
+- **Current FBKit operations:** sections from `Current FBKit Quick Start` through `Live Action Warning` describe the active Facebook automation workflow.
+- **Legacy FlowKit archive:** sections from `Legacy FlowKit / Google Flow Archive` downward document the older Google Flow video pipeline and are retained for historical/reference use only.
+
+For verified Safety Gate entry points and current runtime behavior, see `docs/codebase-summary.md`.
+
 ## Current FBKit Quick Start
 
 ### 1. Start the agent in safe local mode
@@ -134,11 +143,11 @@ Before any live test:
 5. Confirm the extension-side `EXTENSION_LIVE_ACTIONS_ENABLED` guard has been intentionally changed for a controlled test; otherwise the extension still forces dry-run.
 6. Do not live-test inbox/comment/engagement automation until the posting flow is proven safe.
 
-## Legacy FlowKit Documentation
+## Legacy FlowKit / Google Flow Archive
 
 The sections below are legacy FlowKit / Google Flow documentation retained for historical context. They do not describe the current FBKit safety workflow above.
 
-## Showcase
+## Legacy Showcase
 
 All outputs below were generated end-to-end by this system — from story concept to final YouTube-ready video with thumbnails, narration, and branding.
 
@@ -232,7 +241,7 @@ Each project goes through: **story → entities → reference images → scene i
 
 <sub>The Chrome extension runs alongside Google Flow — showing real-time request log (614 total, 328 success), video generation progress, and token status. The Python agent communicates with the extension via WebSocket to automate all API calls.</sub>
 
-## Architecture
+## Legacy Google Flow Architecture
 
 ```
 ┌──────────────────┐     WebSocket      ┌──────────────────────┐
@@ -246,7 +255,7 @@ Each project goes through: **story → entities → reference images → scene i
 └──────────────────┘                    └──────────────────────┘
 ```
 
-## Quick Start
+## Legacy Google Flow Quick Start
 
 ### One-command setup
 
@@ -279,7 +288,7 @@ curl http://127.0.0.1:8100/health
 # {"status":"ok","extension_connected":true}
 ```
 
-## Coolify Hybrid Deployment
+## Legacy Google Flow Coolify Hybrid Deployment
 
 This repo includes a `Dockerfile` and `docker-compose.yaml` for a hybrid Coolify setup:
 
@@ -329,7 +338,7 @@ Then:
 curl http://127.0.0.1:8100/health
 ```
 
-## End-to-End Example: "Pippip the Fish Merchant"
+## Legacy Google Flow End-to-End Example: "Pippip the Fish Merchant"
 
 A chubby cat sells fish at a market. 3 scenes, vertical, Pixar 3D style.
 
@@ -476,7 +485,7 @@ curl -s "http://127.0.0.1:8100/api/scenes?video_id=<VID>"  # get video URLs
 
 ---
 
-## Core Concepts
+## Legacy Google Flow Core Concepts
 
 ### Reference Image System
 
@@ -527,7 +536,7 @@ Voice descriptions are auto-appended to video prompts before generation.
 
 The worker auto-appends `"No background music. Keep only natural sound effects and ambient sounds."` to all video prompts. Sound effects from the scene (footsteps, splashing, wind) are preserved.
 
-## Pipeline Overview
+## Legacy Google Flow Pipeline Overview
 
 ```
 1. Create project      POST /api/projects (with entities + story)
@@ -543,7 +552,7 @@ The worker auto-appends `"No background music. Keep only natural sound effects a
 8. Download + concat   ffmpeg normalize + concat
 ```
 
-## Skills (AI Agent Workflows)
+## Legacy Google Flow Skills (AI Agent Workflows)
 
 Ready-to-use workflow recipes in `skills/` (also available as `/slash-commands` in Claude Code):
 
@@ -607,7 +616,7 @@ Skills work with any AI CLI that can read files:
 | Codex CLI | `AGENTS.md` → reads `CLAUDE.md` | User says `/fk:<name>`, agent reads `skills/fk:<name>.md` |
 | Gemini CLI | `GEMINI.md` → reads `CLAUDE.md` | Same pattern |
 
-## Video Generation Techniques
+## Legacy Google Flow Video Generation Techniques
 
 | Technique | API Type | Use Case |
 |-----------|----------|----------|
@@ -616,7 +625,7 @@ Skills work with any AI CLI that can read files:
 | **r2v** | `GENERATE_VIDEO_REFS` | Reference images → video (intros, dream sequences) |
 | **Upscale** | `UPSCALE_VIDEO` | Video → 4K (TIER_TWO only) |
 
-## API Reference
+## Legacy Google Flow API Reference
 
 ### CRUD Endpoints
 
@@ -648,7 +657,7 @@ Skills work with any AI CLI that can read files:
 | `GENERATE_VIDEO_REFS` | scene_id, project_id, video_id, orientation | Yes | Yes |
 | `UPSCALE_VIDEO` | scene_id, project_id, video_id, orientation | Yes | Yes |
 
-## Worker Behavior
+## Legacy Google Flow Worker Behavior
 
 - **Server handles throttling** — worker enforces max 5 concurrent + 10s cooldown automatically. Use `POST /api/requests/batch` to submit all at once; do NOT manually batch.
 - **10s cooldown** between API calls (anti-spam, configurable via `API_COOLDOWN`)
@@ -660,7 +669,7 @@ Skills work with any AI CLI that can read files:
 - **Voice context** — auto-appends character `voice_description` to video prompts
 - **No background music** — auto-appends "no background music, keep sound effects" to all video prompts
 
-## Material System
+## Legacy Google Flow Material System
 
 Every project must have a `material` field that controls the visual style of generated images. Set it at project creation.
 
@@ -675,7 +684,7 @@ curl -X POST http://127.0.0.1:8100/api/projects \
 
 Materials control both entity `image_prompt` style and scene `scene_prefix`. Examples: `realistic`, `3d_pixar`, `anime`, `stop_motion`, `minecraft`, `oil_painting`.
 
-## Configuration
+## Legacy Google Flow Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -688,7 +697,7 @@ Materials control both entity `image_prompt` style and scene `scene_prefix`. Exa
 | `VIDEO_POLL_TIMEOUT` | `420` | Video gen poll timeout (seconds) |
 | `API_COOLDOWN` | `10` | Seconds between API calls (anti-spam) |
 
-## Architecture
+## Legacy Google Flow Internal Architecture
 
 ```
 agent/
@@ -725,7 +734,7 @@ AGENTS.md                # AI agent instructions (Codex CLI)
 GEMINI.md                # AI agent instructions (Gemini CLI)
 ```
 
-## TTS Narration (OmniVoice)
+## Legacy Google Flow TTS Narration (OmniVoice)
 
 Optional narrator voice for scenes. Uses [OmniVoice](https://github.com/tuannguyenhoangit-droid/OmniVoice) — multilingual zero-shot TTS with voice cloning (600+ languages).
 
@@ -753,7 +762,7 @@ export TTS_PYTHON_BIN=/path/to/omnivoice-venv/bin/python3
 
 CPU-only recommended (MPS produces artifacts). ~15-30s per scene.
 
-## YouTube Upload Pipeline
+## Legacy Google Flow YouTube Upload Pipeline
 
 Automated upload with per-channel rules, SEO optimization, and brand watermarking.
 
@@ -793,7 +802,7 @@ Each channel has a rules file controlling upload scheduling and SEO:
 
 Upload validation checks: max per day, min gap between uploads, avoid dead hours. Auto-detects Short (<61s + vertical 9:16) vs Long-form.
 
-## Troubleshooting
+## Legacy Google Flow Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
