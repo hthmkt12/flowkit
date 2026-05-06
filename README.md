@@ -1,6 +1,121 @@
-# FlowKit
+# FBKit / FlowKit
 
-Standalone system to generate AI videos via Google Flow API. Uses a Chrome extension as browser bridge for authentication, reCAPTCHA solving, and API proxying.
+This repository currently runs **FBKit**, a local-first Facebook automation assistant built from the original FlowKit codebase. It uses a Python FastAPI agent, SQLite task queue, and a Chrome extension WebSocket bridge to run Facebook tasks through a logged-in browser session.
+
+> **Safety default:** FBKit is dry-run first. Real mutating Facebook actions are disabled by default and require explicit server-side approval before live dispatch.
+
+## Current FBKit Quick Start
+
+### 1. Start the agent in safe local mode
+
+PowerShell:
+
+```powershell
+$env:LIVE_ACTIONS_ENABLED="false"
+$env:DRY_RUN_DEFAULT="true"
+$env:APPROVAL_REQUIRED="true"
+$env:API_AUTH_ENABLED="false"
+$env:WS_AUTH_ENABLED="false"
+.\.venv\Scripts\python.exe -m agent.main
+```
+
+Bash/Git Bash/WSL:
+
+```bash
+LIVE_ACTIONS_ENABLED=false \
+DRY_RUN_DEFAULT=true \
+APPROVAL_REQUIRED=true \
+API_AUTH_ENABLED=false \
+WS_AUTH_ENABLED=false \
+python -m agent.main
+```
+
+The agent listens on:
+
+- REST API: `http://127.0.0.1:8100`
+- Extension WebSocket: `ws://127.0.0.1:9222`
+
+### 2. Load and connect the Chrome extension
+
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and select `extension/`.
+4. Open `https://www.facebook.com/` and sign in.
+5. Verify the extension session:
+
+```bash
+curl http://127.0.0.1:8100/api/status
+```
+
+Look for a logged-in session with a non-empty `fb_uid`:
+
+```json
+{
+  "extension": {
+    "connected": true,
+    "sessions": [{"fb_uid": "...", "logged_in": true}]
+  }
+}
+```
+
+### 3. Run the safe dry-run smoke test
+
+```bash
+python scripts/fbkit-dry-run-smoke.py
+```
+
+On Windows with the repo virtualenv:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\fbkit-dry-run-smoke.py
+```
+
+The smoke script:
+
+- checks `/api/status`
+- finds the logged-in extension `fb_uid`
+- finds or creates a matching local account
+- submits exactly one `POST_TEXT` task with `dryRun=true`
+- passes only if the task completes with `dryRun=true`
+
+It does **not** approve tasks and does **not** request live dispatch.
+
+## Safety Gate Defaults
+
+FBKit centralizes mutation safety in `agent/services/safety_gate.py`.
+
+| Env var | Safe default | Purpose |
+|---|---:|---|
+| `LIVE_ACTIONS_ENABLED` | `false` | Global switch for live Facebook mutations |
+| `DRY_RUN_DEFAULT` | `true` | Default to dry-run when no explicit payload flag is provided |
+| `APPROVAL_REQUIRED` | `true` | Require server-owned `_serverApproved=true` before live mutation |
+
+Mutating task types include posting, messaging, liking, commenting, sharing, friend actions, group actions, page follow/unfollow, and video reup tasks.
+
+Additional protections:
+
+- external `/api/tasks` creation strips client-supplied approval/quota markers
+- worker re-enforces Safety Gate immediately before extension dispatch
+- live quota is reserved before live dispatch and skipped for dry-run tasks
+- `FBClient` requires exact `fb_uid` routing when a task targets a specific Facebook account
+- live mutating worker tasks fail closed if the account has no resolved `fb_uid`
+- extension mutating handlers return before navigation/click/type/file-upload when `dryRun=true`
+
+## Live Action Warning
+
+Do **not** enable live Facebook actions on your main account as a first test.
+
+Before any live test:
+
+1. Create a dedicated test Facebook account/page/group.
+2. Keep `LIVE_ACTIONS_ENABLED=false` until dry-run smoke tests pass.
+3. Start with one low-risk post task.
+4. Approve it through the server approval endpoint only after reviewing the payload.
+5. Do not live-test inbox/comment/engagement automation until the posting flow is proven safe.
+
+## Legacy FlowKit Documentation
+
+The sections below are legacy FlowKit / Google Flow documentation retained for historical context. They do not describe the current FBKit safety workflow above.
 
 ## Showcase
 
