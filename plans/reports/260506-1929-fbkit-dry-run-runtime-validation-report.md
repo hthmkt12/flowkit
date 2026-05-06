@@ -30,7 +30,7 @@ Runtime dry-run validation was recorded for the FBKit smoke variants under safe 
 | `COMMENT_POST` smoke variant | Passed in dry-run mode |
 | `SEND_MESSAGE` smoke variant | Passed in dry-run mode |
 | `/api/status` | Worked during runtime validation |
-| `/health` | Returned `{ "detail": "Not Found" }` |
+| `/health` | Returned `{ "detail": "Not Found" }` during this validation; later commit `94e9bce` added basic `GET /health` returning `{ "status": "ok" }` |
 
 ## Safety Notes
 
@@ -53,7 +53,7 @@ Runtime dry-run validation was recorded for the FBKit smoke variants under safe 
 
 - Keep the documented safe flags for local smoke validation.
 - Treat `/api/status` as the current runtime readiness check for extension/session visibility.
-- Do not rely on `/health` unless a health endpoint is intentionally added later.
+- Use `/health` only as a basic process check in versions that include commit `94e9bce` or later.
 
 ## Unresolved Questions
 
