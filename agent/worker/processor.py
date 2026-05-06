@@ -7,7 +7,6 @@ import asyncio
 import json
 import logging
 import traceback
-from datetime import datetime
 
 from agent.config import (
     MAX_CONCURRENT_TASKS,
@@ -20,6 +19,7 @@ from agent.services.human_delay import action_delay, long_delay, get_session_man
 from agent.services.event_bus import event_bus
 from agent.services.notifier import get_notifier
 from agent.services.safety_gate import dry_run_from_payload, enforce_payload, is_mutating_task
+from agent.utils.time import utc_from_timestamp_iso, utc_now_iso, utc_now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ class WorkerController:
         task_id = task["id"]
         task_type = task["task_type"]
         session = get_session_manager()
-        started_at_ms = int(datetime.utcnow().timestamp() * 1000)
+        started_at_ms = utc_now_ms()
         payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
         payload = enforce_payload(task_type, payload)
         is_dry_run = dry_run_from_payload(payload)
@@ -248,7 +248,7 @@ class WorkerController:
         try:
             # Mark as processing
             await crud.update_task(task_id, status="PROCESSING",
-                                   started_at=datetime.utcnow().isoformat())
+                                   started_at=utc_now_iso())
             await event_bus.emit("task_started", {"task_id": task_id, "type": task_type})
 
             if is_mutating_task(task_type) and not is_dry_run and not fb_uid:
@@ -265,11 +265,11 @@ class WorkerController:
                 raise Exception(result["error"])
 
             # Success
-            duration_ms = int(datetime.utcnow().timestamp() * 1000) - started_at_ms
+            duration_ms = utc_now_ms() - started_at_ms
             await crud.update_task(
                 task_id,
                 status="COMPLETED",
-                completed_at=datetime.utcnow().isoformat(),
+                completed_at=utc_now_iso(),
                 result=json.dumps(result),
             )
 
@@ -306,7 +306,7 @@ class WorkerController:
 
         except Exception as e:
             logger.error("Task %s (%s) failed: %s", task_id[:8], task_type, e)
-            duration_ms = int(datetime.utcnow().timestamp() * 1000) - started_at_ms
+            duration_ms = utc_now_ms() - started_at_ms
             retry_count = task.get("retry_count", 0) + 1
             max_retries = task.get("max_retries", MAX_RETRIES)
 
@@ -338,15 +338,13 @@ class WorkerController:
                 workarounds=[{
                     "error": error_message[:200],
                     "error_class": error_class,
-                    "recorded_at": datetime.utcnow().isoformat(),
+                    "recorded_at": utc_now_iso(),
                 }],
             )
 
             if error_class == "RETRYABLE" and retry_count < max_retries:
                 delay_s = _next_retry_delay_s(retry_count)
-                scheduled_at = datetime.utcfromtimestamp(
-                    datetime.utcnow().timestamp() + delay_s
-                ).isoformat()
+                scheduled_at = utc_from_timestamp_iso((utc_now_ms() / 1000) + delay_s)
                 await crud.update_task(
                     task_id,
                     status="PENDING",
@@ -365,7 +363,7 @@ class WorkerController:
                 await crud.update_task(
                     task_id,
                     status="FAILED",
-                    completed_at=datetime.utcnow().isoformat(),
+                    completed_at=utc_now_iso(),
                     error_message=error_message,
                 )
                 await event_bus.emit(

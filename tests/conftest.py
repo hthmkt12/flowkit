@@ -22,12 +22,11 @@ def _isolate_env(tmp_path, monkeypatch):
     yield
 
     # Cleanup: close db if opened
-    loop = asyncio.get_event_loop()
     if schema_mod._db is not None:
-        if loop.is_running():
-            pass  # Will be cleaned by next test
-        else:
-            loop.run_until_complete(schema_mod.close_db())
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(schema_mod.close_db())
 
 
 @pytest.fixture

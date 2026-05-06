@@ -4,7 +4,7 @@ import fnmatch
 import json
 import logging
 import uuid
-from datetime import datetime, date
+from datetime import date
 from json import JSONDecodeError
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives import hashes
 from agent.db.schema import get_db
 from agent.config import DATA_ENCRYPTION_KEY
 from agent.services.safety_gate import enforce_payload, is_mutating_task
+from agent.utils.time import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,7 @@ async def update_account(account_id: str, **kwargs) -> dict | None:
     if not kwargs:
         return await get_account(account_id)
     db = await get_db()
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
+    kwargs["updated_at"] = utc_now_iso()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = [_encrypt_if_needed(k, v) for k, v in kwargs.items()] + [account_id]
     await db.execute(f"UPDATE account SET {sets} WHERE id = ?", vals)
@@ -175,7 +176,7 @@ async def reset_daily_counters(account_id: str):
     await db.execute(
         "UPDATE account SET daily_posts=0, daily_messages=0, daily_likes=0, "
         "daily_comments=0, daily_friends=0, daily_reset_at=?, updated_at=? WHERE id=?",
-        (today, datetime.utcnow().isoformat(), account_id)
+        (today, utc_now_iso(), account_id)
     )
     await db.commit()
 
@@ -189,7 +190,7 @@ async def increment_daily_counter(account_id: str, counter: str):
         await reset_daily_counters(account_id)
     await db.execute(
         f"UPDATE account SET {counter} = {counter} + 1, updated_at = ? WHERE id = ?",
-        (datetime.utcnow().isoformat(), account_id)
+        (utc_now_iso(), account_id)
     )
     await db.commit()
 
@@ -207,7 +208,7 @@ async def reserve_daily_counter(account_id: str, counter: str, units: int, limit
     cur = await db.execute(
         f"UPDATE account SET {counter} = {counter} + ?, updated_at = ? "
         f"WHERE id = ? AND ({counter} + ?) <= ?",
-        (units, datetime.utcnow().isoformat(), account_id, units, limit),
+        (units, utc_now_iso(), account_id, units, limit),
     )
     await db.commit()
     return cur.rowcount == 1
@@ -251,7 +252,7 @@ async def update_post(post_id: str, **kwargs) -> dict | None:
     if not kwargs:
         return await get_post(post_id)
     db = await get_db()
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
+    kwargs["updated_at"] = utc_now_iso()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [post_id]
     await db.execute(f"UPDATE post SET {sets} WHERE id = ?", vals)
@@ -262,7 +263,7 @@ async def update_post(post_id: str, **kwargs) -> dict | None:
 async def claim_scheduled_post(post_id: str, before: str) -> dict | None:
     """Claim one due scheduled post before enqueueing its task."""
     db = await get_db()
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
     cur = await db.execute(
         "UPDATE post SET status = 'POSTING', updated_at = ? "
         "WHERE id = ? AND status = 'SCHEDULED' AND scheduled_at <= ?",
@@ -334,7 +335,7 @@ async def update_message(message_id: str, **kwargs) -> dict | None:
     if not kwargs:
         return await get_message(message_id)
     db = await get_db()
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
+    kwargs["updated_at"] = utc_now_iso()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [message_id]
     await db.execute(f"UPDATE message SET {sets} WHERE id = ?", vals)
@@ -345,7 +346,7 @@ async def update_message(message_id: str, **kwargs) -> dict | None:
 async def claim_scheduled_message(message_id: str, before: str) -> dict | None:
     """Claim one due scheduled message before enqueueing its task."""
     db = await get_db()
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
     cur = await db.execute(
         "UPDATE message SET status = 'SENDING', updated_at = ? "
         "WHERE id = ? AND status = 'SCHEDULED' AND scheduled_at <= ?",
@@ -435,7 +436,7 @@ async def update_task(task_id: str, **kwargs) -> dict | None:
     if not kwargs:
         return await get_task(task_id)
     db = await get_db()
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
+    kwargs["updated_at"] = utc_now_iso()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [task_id]
     await db.execute(f"UPDATE task SET {sets} WHERE id = ?", vals)
@@ -448,7 +449,7 @@ async def approve_pending_task(task_id: str, payload: str) -> dict | None:
     db = await get_db()
     cur = await db.execute(
         "UPDATE task SET payload = ?, updated_at = ? WHERE id = ? AND status = 'PENDING'",
-        (payload, datetime.utcnow().isoformat(), task_id),
+        (payload, utc_now_iso(), task_id),
     )
     await db.commit()
     if cur.rowcount != 1:
@@ -459,7 +460,7 @@ async def approve_pending_task(task_id: str, payload: str) -> dict | None:
 async def get_next_pending_task() -> dict | None:
     """Get the highest-priority pending task that's ready to run."""
     db = await get_db()
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
     cur = await db.execute(
         "SELECT * FROM task WHERE status = 'PENDING' "
         "AND (scheduled_at IS NULL OR scheduled_at <= ?) "
@@ -472,7 +473,7 @@ async def get_next_pending_task() -> dict | None:
 async def claim_next_pending_task() -> dict | None:
     """Atomically move the next ready task to PROCESSING and return it."""
     db = await get_db()
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
     cur = await db.execute(
         "SELECT id FROM task WHERE status = 'PENDING' "
         "AND (scheduled_at IS NULL OR scheduled_at <= ?) "
@@ -610,7 +611,7 @@ async def update_seed_campaign(campaign_id: str, **kwargs) -> dict | None:
     if not kwargs:
         return await get_seed_campaign(campaign_id)
     db = await get_db()
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
+    kwargs["updated_at"] = utc_now_iso()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [campaign_id]
     await db.execute(f"UPDATE seed_campaign SET {sets} WHERE id = ?", vals)
@@ -660,7 +661,7 @@ async def update_spy_target(target_id: str, **kwargs) -> dict | None:
     if not kwargs:
         return await get_spy_target(target_id)
     db = await get_db()
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
+    kwargs["updated_at"] = utc_now_iso()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [target_id]
     await db.execute(f"UPDATE spy_target SET {sets} WHERE id = ?", vals)
@@ -721,7 +722,7 @@ async def upsert_strategy(
     """Create or update a strategy for a task type + URL pattern."""
     db = await get_db()
     existing = await _get_strategy_exact(task_type, url_pattern)
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
 
     if existing:
         # Merge: extend lists, update dicts
@@ -778,7 +779,7 @@ async def record_strategy_outcome(
 ) -> None:
     """Increment success/fail count and update timestamps."""
     db = await get_db()
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
     if success:
         await db.execute(
             "UPDATE task_strategy SET success_count = success_count + 1, "

@@ -18,6 +18,7 @@ from typing import Optional
 from agent.db import crud
 from agent.db.schema import get_db
 from agent.services.event_bus import event_bus
+from agent.utils.time import utc_now, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class SpyAdsService:
 
         while not self._shutdown.is_set():
             try:
-                now = datetime.utcnow()
+                now = utc_now()
 
                 for target in self._targets.values():
                     if target.status != "ACTIVE":
@@ -173,7 +174,7 @@ class SpyAdsService:
                 payload=json.dumps(payload),
                 ref_id=target.id,
             )
-            target.last_checked = datetime.utcnow().isoformat()
+            target.last_checked = utc_now_iso()
 
             # Persist last_checked to DB
             await crud.update_spy_target(target.id, last_checked=target.last_checked)
@@ -213,7 +214,7 @@ class SpyAdsService:
                         ad.get("text", ""),
                         ad.get("media_url", ""),
                         ad.get("status", "ACTIVE"),
-                        datetime.utcnow().isoformat(),
+                        utc_now_iso(),
                     )
                 )
                 new_ads += 1
