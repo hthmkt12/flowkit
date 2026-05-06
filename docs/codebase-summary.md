@@ -99,6 +99,12 @@ Live approval is server-owned. External `/tasks` creation strips `approved` and 
 
 Approval rejects malformed task payload JSON with `400` and writes an `APPROVE_TASK` activity log entry after successful approval.
 
+## Extension DOM-Action Guard
+
+`extension/content-fb.js` keeps a centralized `MUTATING_METHODS` set at the message router. When `EXTENSION_LIVE_ACTIONS_ENABLED=false`, mutating extension methods are blocked before handler dispatch and return a dry-run result with `safetyReason=extension_live_actions_disabled`.
+
+Handler-level dry-run checks remain as a second extension-side boundary before navigation, click, type, upload, or keyboard-submit DOM actions.
+
 ## `POST_LINK` Dispatch Behavior
 
 `agent/worker/processor.py` dispatches `POST_LINK` through the existing text-post client path:
@@ -159,6 +165,13 @@ Verified in `agent/config.py`:
 - approved live tasks can set `dryRun=false` when live actions are enabled
 - `FBClient` does not fallback to another session when a requested `fb_uid` is missing
 - live mutating worker tasks fail closed when the task account has no `fb_uid`
+
+`tests/unit/test_extension_dry_run.py` verifies:
+
+- extension live actions are disabled by default in `content-fb.js`
+- the message router keeps mutating methods separate from read-only methods
+- mutating router methods are forced to dry-run before handler dispatch when extension live actions are disabled
+- mutating handlers check both payload dry-run and extension live guard before dangerous DOM actions
 
 ## Documentation Impact Assessment
 
