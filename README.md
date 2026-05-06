@@ -87,8 +87,15 @@ The smoke script:
 - checks `/api/status`
 - finds the logged-in extension `fb_uid`
 - finds or creates a matching local account
-- submits exactly one `POST_TEXT` task with `dryRun=true`
+- submits exactly one task with `dryRun=true`
+- defaults to `POST_TEXT`, with optional safe variants: `LIKE_POST`, `COMMENT_POST`, `SEND_MESSAGE`
 - passes only if the task completes with `dryRun=true`
+
+Run a specific dry-run variant:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\fbkit-dry-run-smoke.py --variant LIKE_POST --content "https://www.facebook.com/example/posts/123"
+```
 
 It does **not** approve tasks and does **not** request live dispatch.
 

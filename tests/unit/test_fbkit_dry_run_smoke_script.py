@@ -14,19 +14,105 @@ def _load_script():
     return module
 
 
-def test_build_task_payload_is_always_dry_run_post_text():
+def test_build_task_payload_supports_safe_variants_and_is_always_dry_run():
     script = _load_script()
 
-    payload = script.build_task_payload("account-1", "hello")
-
-    assert payload == {
-        "account_id": "account-1",
-        "task_type": "POST_TEXT",
-        "payload": {
-            "content": "hello",
-            "dryRun": True,
-        },
+    cases = {
+        "POST_TEXT": {"content": "hello"},
+        "LIKE_POST": {"postUrl": "hello", "reaction": "LIKE"},
+        "COMMENT_POST": {"postUrl": "hello", "comment": script.COMMENT_SMOKE_TEXT},
+        "SEND_MESSAGE": {"recipientName": "hello", "content": script.MESSAGE_SMOKE_TEXT},
     }
+
+    for variant, expected_payload in cases.items():
+        payload = script.build_task_payload("account-1", "hello", variant)
+
+        assert payload == {
+            "account_id": "account-1",
+            "task_type": variant,
+            "payload": {**expected_payload, "dryRun": True},
+        }
+
+
+def test_build_task_payload_rejects_unknown_variant():
+    script = _load_script()
+
+    try:
+        script.build_task_payload("account-1", "hello", "APPROVE_TASK")
+    except ValueError as exc:
+        assert "Unsupported smoke variant" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_parse_args_defaults_to_post_text_variant():
+    script = _load_script()
+
+    args = script.parse_args([])
+
+    assert args.variant == "POST_TEXT"
+
+
+def test_parse_args_accepts_safe_variant():
+    script = _load_script()
+
+    args = script.parse_args(["--variant", "LIKE_POST"])
+
+    assert args.variant == "LIKE_POST"
+
+
+def test_run_smoke_submits_selected_variant(monkeypatch):
+    script = _load_script()
+    submitted_body = None
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        nonlocal submitted_body
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-7"}]}}
+        if path == "/api/accounts":
+            return [{"id": "account-7", "fb_uid": "fb-7"}]
+        if path == "/api/tasks" and method == "POST":
+            submitted_body = body
+            return {"id": "task-7"}
+        if path == "/api/tasks/task-7":
+            return {"id": "task-7", "status": "COMPLETED", "result": '{"success": true, "dryRun": true}'}
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "https://example.invalid/post", None, 1, "LIKE_POST") == 0
+    assert submitted_body == script.build_task_payload("account-7", "https://example.invalid/post", "LIKE_POST")
+
+
+def test_run_smoke_posts_only_safe_dry_run_task_for_each_variant(monkeypatch):
+    script = _load_script()
+    calls = []
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        calls.append((path, method, body))
+        if path == "/api/status":
+            return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-safe"}]}}
+        if path == "/api/accounts":
+            return [{"id": "account-safe", "fb_uid": "fb-safe"}]
+        if path == "/api/tasks" and method == "POST":
+            assert body["payload"]["dryRun"] is True
+            assert "live" not in body["payload"]
+            assert "liveRun" not in body["payload"]
+            assert "_serverApproved" not in body["payload"]
+            return {"id": f"task-{body['task_type']}"}
+        if path.startswith("/api/tasks/task-"):
+            return {"status": "COMPLETED", "result": '{"success": true, "dryRun": true}'}
+        raise AssertionError(f"Unexpected call: {path} {method}")
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    for variant in script.SAFE_VARIANTS:
+        calls.clear()
+        assert script.run_smoke("http://agent", "hello", None, 1, variant) == 0
+        task_posts = [call for call in calls if call[0] == "/api/tasks" and call[1] == "POST"]
+        assert len(task_posts) == 1
+        assert not any("approve" in path.lower() for path, _, _ in calls)
+        assert not any(path.startswith("/api/tasks/") and path.endswith("/approve") for path, _, _ in calls)
 
 
 def test_find_logged_in_session_returns_only_logged_in_uid():

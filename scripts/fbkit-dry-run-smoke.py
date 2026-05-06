@@ -1,6 +1,6 @@
 """Safe FBKit runtime smoke test.
 
-This script submits one POST_TEXT dry-run task through the public API and
+This script submits one selected safe dry-run task through the public API and
 verifies the worker/extension path returns a dryRun result. It never approves
 tasks and never asks the server for live dispatch.
 """
@@ -13,6 +13,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+
+SAFE_VARIANTS = ("POST_TEXT", "LIKE_POST", "COMMENT_POST", "SEND_MESSAGE")
+COMMENT_SMOKE_TEXT = "FBKit smoke test comment - dry run only"
+MESSAGE_SMOKE_TEXT = "FBKit smoke test message - dry run only"
 
 
 def request_json(base_url: str, path: str, method: str = "GET", body: dict | None = None, api_key: str | None = None) -> dict | list:
@@ -45,14 +50,22 @@ def find_account_id(accounts: list[dict], fb_uid: str) -> str | None:
     return None
 
 
-def build_task_payload(account_id: str, content: str) -> dict:
+def build_task_payload(account_id: str, content: str, variant: str = "POST_TEXT") -> dict:
+    if variant == "POST_TEXT":
+        payload = {"content": content}
+    elif variant == "LIKE_POST":
+        payload = {"postUrl": content, "reaction": "LIKE"}
+    elif variant == "COMMENT_POST":
+        payload = {"postUrl": content, "comment": COMMENT_SMOKE_TEXT}
+    elif variant == "SEND_MESSAGE":
+        payload = {"recipientName": content, "content": MESSAGE_SMOKE_TEXT}
+    else:
+        raise ValueError(f"Unsupported smoke variant: {variant}")
+    payload["dryRun"] = True
     return {
         "account_id": account_id,
-        "task_type": "POST_TEXT",
-        "payload": {
-            "content": content,
-            "dryRun": True,
-        },
+        "task_type": variant,
+        "payload": payload,
     }
 
 
@@ -85,7 +98,7 @@ def ensure_account(base_url: str, fb_uid: str, api_key: str | None) -> str:
     return account["id"]
 
 
-def run_smoke(base_url: str, content: str, api_key: str | None, poll_seconds: int) -> int:
+def run_smoke(base_url: str, content: str, api_key: str | None, poll_seconds: int, variant: str = "POST_TEXT") -> int:
     status = request_json(base_url, "/api/status", api_key=api_key)
     fb_uid = find_logged_in_uid(status)
     if not fb_uid:
@@ -93,7 +106,7 @@ def run_smoke(base_url: str, content: str, api_key: str | None, poll_seconds: in
         return 2
 
     account_id = ensure_account(base_url, fb_uid, api_key)
-    task = request_json(base_url, "/api/tasks", method="POST", api_key=api_key, body=build_task_payload(account_id, content))
+    task = request_json(base_url, "/api/tasks", method="POST", api_key=api_key, body=build_task_payload(account_id, content, variant))
     task_id = task["id"]
     deadline = time.time() + poll_seconds
 
@@ -118,13 +131,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--content", default="FBKit smoke test - dry run only")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--poll-seconds", type=int, default=60)
+    parser.add_argument("--variant", choices=SAFE_VARIANTS, default="POST_TEXT")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     try:
-        return run_smoke(args.base_url, args.content, args.api_key, args.poll_seconds)
+        return run_smoke(args.base_url, args.content, args.api_key, args.poll_seconds, args.variant)
     except urllib.error.URLError as exc:
         print(f"FAIL: API request failed: {exc}", file=sys.stderr)
         return 1
