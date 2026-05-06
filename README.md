@@ -154,6 +154,8 @@ Before any live test:
 
 The sections below are legacy FlowKit / Google Flow documentation retained for historical context. They do not describe the current FBKit safety workflow above.
 
+> **Current FBKit readiness:** use `GET /api/status` for the active FBKit runtime and extension-session check. Historical `/health` references below belong to the legacy Google Flow archive; the latest safe-mode validation observed `/health` returning `{ "detail": "Not Found" }`.
+
 ## Legacy Showcase
 
 All outputs below were generated end-to-end by this system — from story concept to final YouTube-ready video with thumbnails, narration, and branding.

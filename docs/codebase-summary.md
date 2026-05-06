@@ -145,6 +145,8 @@ Validated dry-run variants:
 
 The validation used `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`, `API_AUTH_ENABLED=false`, and `WS_AUTH_ENABLED=false`. No tasks were approved, no approval endpoints were called, and no live Facebook actions were enabled.
 
+For current FBKit readiness, use `GET /api/status`. The legacy Google Flow archive still contains historical `/health` examples, but the latest safe-mode validation observed `/health` returning `{ "detail": "Not Found" }`.
+
 ## Test Coverage
 
 `tests/unit/test_safety_gate.py` verifies:
