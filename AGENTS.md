@@ -1,6 +1,6 @@
-# FBKit / FlowKit Agent Instructions
+# FBKit Agent Instructions
 
-This repository currently runs FBKit: a local-first Facebook automation assistant built from the original FlowKit codebase. The active stack is a Python FastAPI agent, SQLite task queue, and Chrome extension WebSocket bridge.
+This repository runs FBKit: a local-first Facebook automation assistant. The active stack is a Python FastAPI agent, SQLite task queue, and Chrome extension WebSocket bridge.
 
 Base URL: `http://127.0.0.1:8100`
 

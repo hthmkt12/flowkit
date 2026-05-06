@@ -1,4 +1,4 @@
-# FBKit / FlowKit
+# FBKit
 
 FBKit is the active project in this repository. It is a local-first Facebook automation assistant using a Python FastAPI agent, SQLite task queue, and Chrome extension WebSocket bridge.
 

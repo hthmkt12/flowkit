@@ -13,6 +13,7 @@ export interface Account {
   status: AccountStatus
   profile_url: string | null
   avatar_url: string | null
+  notes: string | null
   cookies_valid: number
   last_active: string | null
   daily_posts: number

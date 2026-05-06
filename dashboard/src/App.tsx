@@ -34,7 +34,7 @@ function Layout() {
           <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--accent)' }}>
             FBKit
           </div>
-          <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>Flow Agent</div>
+          <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px' }}>FBKit Agent</div>
         </div>
         <nav className="flex flex-col gap-1 px-2 py-3" style={{ flex: 1 }}>
           {NAV.map(({ to, icon: Icon, label, exact }) => (

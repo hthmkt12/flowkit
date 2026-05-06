@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS message (
 CREATE INDEX IF NOT EXISTS idx_message_account ON message(account_id);
 CREATE INDEX IF NOT EXISTS idx_message_status ON message(status);
 
--- ─── Task (Job queue — replaces FlowKit 'request') ─────────
+-- ─── Task (FBKit job queue) ─────────────────────────────────
 CREATE TABLE IF NOT EXISTS task (
     id              TEXT PRIMARY KEY,
     account_id      TEXT REFERENCES account(id),

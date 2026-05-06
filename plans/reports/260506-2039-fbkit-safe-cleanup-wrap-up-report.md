@@ -32,6 +32,7 @@ FBKit safe cleanup is current on `main` and synced with `origin/main`. The work 
 | `3c2a8fe` | Clarify active FBKit readiness check |
 | `94e9bce` | Add basic FBKit `/health` endpoint |
 | `dfa82d3` | Update health validation note after `/health` endpoint |
+| `9e6aca0` | Add FBKit safe cleanup wrap-up report |
 
 ## Verification Evidence
 
@@ -48,18 +49,19 @@ FBKit safe cleanup is current on `main` and synced with `origin/main`. The work 
 
 ## Current Operator Guidance
 
-- Use `GET /health` for a basic process check.
+- Use `GET /health` for a basic process check. Current response is `{"status":"ok"}`.
 - Use `GET /api/status` for FBKit runtime, extension-session, worker, scheduler, and task status details.
-- Treat README sections below `Legacy FlowKit / Google Flow Archive` as historical unless explicitly marked current FBKit.
+- README is now FBKit-only after the legacy removal.
 - Keep safe local flags for dry-run validation: `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`, `API_AUTH_ENABLED=false`, `WS_AUTH_ENABLED=false`.
+- Do not call `POST /tasks/{task_id}/approve` during safe cleanup or dry-run validation.
 
 ## Remaining Safe Options
 
 | Option | Notes |
 |---|---|
-| Stop here | Repo is synced and clean after latest push evidence. |
+| Stop here after docs-only cleanup | Working tree now has docs-only readiness wording changes; commit only if requested. |
 | Add `/health` docs to a dedicated API reference | Useful if a current FBKit API reference is created. |
-| Further legacy archive cleanup | Mark old `skills/fk-*` docs as legacy to reduce confusion. |
+| Legacy removal follow-up | Completed in `plans/260506-2247-remove-google-flow-legacy-pipeline/`. |
 | Add authenticated `/api/status` wording where relevant | Low-risk docs polish; no behavior change. |
 
 ## Unresolved Questions

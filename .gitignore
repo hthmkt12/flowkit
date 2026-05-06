@@ -11,15 +11,12 @@ venv/
 output/
 runtime/
 youtube
-agent/active_project.json
 extension/_metadata/
 
-# Generated AI tool configs (run: python setup.py)
-.claude/commands/fk:*
+# Local/generated AI tool configs
 .gemini/commands/
-AGENTS.md
-GEMINI.md
-.fk-setup.json
+.claude/skills/
+.opencode/skills/
 
 # Local/generated agent artifacts
 repomix-output.xml

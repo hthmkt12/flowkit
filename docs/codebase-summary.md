@@ -1,36 +1,16 @@
-# FlowKit Codebase Summary
+# FBKit Codebase Summary
 
 Last updated: 2026-05-06
 
-## Scope Verified
-
-This summary is based on `repomix-output.xml` generated from these verified files:
-
-- `agent/api/posts.py`
-- `agent/api/tasks.py`
-- `agent/api/groups.py`
-- `agent/api/messages.py`
-- `agent/services/safety_gate.py`
-- `agent/services/auto_seed.py`
-- `agent/services/fb_client.py`
-- `agent/services/scheduler.py`
-- `agent/worker/processor.py`
-- `extension/content-fb.js`
-- `tests/unit/test_safety_gate.py`
-- `tests/unit/test_extension_dry_run.py`
-- existing Markdown files under `docs/`
-- `README.md`
-
 ## Current Runtime Shape
 
-FlowKit currently contains two documented domains:
+FBKit is now the only active product in this repository. The old video-generation pipeline has been removed.
 
 | Area | Verified files | Purpose |
 |---|---|---|
-| Google Flow video pipeline | `README.md`, `docs/deployment-kit/**` | Project/video/scene generation, lane orchestration, deployment kit |
 | Facebook automation worker | `agent/api/posts.py`, `agent/api/tasks.py`, `agent/worker/processor.py` | Queue tasks for post, message, engagement, group/page/friend actions |
-
-The Safety Gate changes apply to the Facebook automation worker path, not the Google Flow generation path documented in most existing docs.
+| Safety Gate | `agent/services/safety_gate.py`, `tests/unit/test_safety_gate.py` | Enforce dry-run, approval, and live-action boundaries |
+| Extension guard | `extension/content-fb.js`, `tests/unit/test_extension_dry_run.py` | Prevent dangerous DOM actions when dry-run or extension live actions are disabled |
 
 ## Safety Gate Behavior
 
@@ -65,8 +45,6 @@ Verified mutating task types include:
 
 ## Safety Gate Entry Points
 
-Safety Gate enforcement is applied before direct task creation in these verified paths:
-
 | Entry point | Verified file | Behavior |
 |---|---|---|
 | `POST /tasks` | `agent/api/tasks.py` | Enforces payload before `crud.create_task()` |
@@ -85,7 +63,7 @@ Safety Gate enforcement is applied before direct task creation in these verified
 | Worker quota reservation | `agent/db/crud.py`, `agent/worker/processor.py` | Reserves live daily quota after Safety Gate enforcement and before dispatch |
 | Worker dispatch | `agent/worker/processor.py` | Re-enforces payload immediately before client dispatch |
 
-Worker dispatch remains the final safety boundary before calling `FBClient` methods.
+Worker dispatch remains the final server-side safety boundary before calling `FBClient` methods.
 
 Live mutating tasks require an account with a resolved `fb_uid` before dispatch. This prevents legacy or incomplete account records from falling back to an arbitrary connected Chrome extension session. Dry-run and read-only tasks can still use fallback routing when no `fb_uid` is requested.
 
@@ -115,13 +93,6 @@ Handler-level dry-run checks remain as a second extension-side boundary before n
 4. If a link exists, it appends the link to content separated by a newline.
 5. Worker calls `client.post_text(...)` with the combined content.
 
-Verified example from `tests/unit/test_safety_gate.py`:
-
-```text
-Read this before publishing
-https://example.com/article
-```
-
 ## Configuration Keys
 
 Verified in `agent/config.py`:
@@ -134,8 +105,6 @@ Verified in `agent/config.py`:
 
 ## Runtime Dry-Run Validation
 
-Runtime safe-mode smoke validation is recorded in `plans/reports/260506-1929-fbkit-dry-run-runtime-validation-report.md`.
-
 Validated dry-run variants:
 
 - `POST_TEXT`
@@ -145,49 +114,17 @@ Validated dry-run variants:
 
 The validation used `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`, `API_AUTH_ENABLED=false`, and `WS_AUTH_ENABLED=false`. No tasks were approved, no approval endpoints were called, and no live Facebook actions were enabled.
 
-For current FBKit readiness, use `GET /health` for a basic process check and `GET /api/status` for extension/session/runtime details. Legacy Google Flow archive sections may still describe richer historical `/health` response fields.
+## Current FBKit Readiness Endpoints
+
+| Endpoint | Current use |
+|---|---|
+| `GET /health` | Basic process check. Current response is `{"status":"ok"}`. |
+| `GET /api/status` | FBKit runtime, extension session, worker, scheduler, and task status details. |
+
+Do not use `POST /tasks/{task_id}/approve` as part of safe cleanup or dry-run validation.
 
 ## Test Coverage
 
-`tests/unit/test_safety_gate.py` verifies:
+`tests/unit/test_safety_gate.py` verifies Safety Gate behavior for dry-run enforcement, task creation, approvals, scheduled enqueue, quota reservation, `POST_LINK`, `REUP_VIDEO`, and exact `fb_uid` routing.
 
-- mutating tasks are forced to dry-run when live actions are disabled
-- read-only `CHECK_LOGIN` payloads stay unchanged
-- external task creation strips client-supplied approval markers
-- server approval endpoint allows live dispatch when global live actions are enabled
-- server approval endpoint rejects non-`PENDING` task statuses
-- server approval rechecks `PENDING` status during the guarded update
-- server approval logs `APPROVE_TASK` activity after success
-- server approval rejects malformed task payload JSON with a controlled error
-- `/posts` auto-queue applies Safety Gate to `POST_LINK`
-- `/groups/join` and `/groups/leave` apply Safety Gate to group mutation tasks
-- `/groups/scrape` remains read-only and does not receive dry-run fields
-- `/messages` and `/messages/bulk` auto-queue paths apply Safety Gate to message tasks
-- auto-seeding engagement task creation applies Safety Gate
-- scheduler enqueue applies Safety Gate to scheduled posts
-- reup video creation applies Safety Gate before task creation
-- scheduled post enqueue is idempotent after the first claim
-- pending task claim only returns the task once
-- forced dry-run tasks are allowed even when live quota is exhausted
-- bulk message quota reserves one unit per recipient and rejects over-limit batches
-- bulk message quota rejects malformed recipient payloads without reserving quota
-- retrying the same reserved task does not reserve quota twice
-- external task creation strips client-supplied quota reservation markers
-- worker dispatch passes `dry_run` to client calls
-- `POST_LINK` routes through `post_text` with the link appended to content
-- successful dry-run tasks do not increment live daily counters
-- dry-run `REUP_VIDEO` returns before downloading external media
-- approved live tasks can set `dryRun=false` when live actions are enabled
-- `FBClient` does not fallback to another session when a requested `fb_uid` is missing
-- live mutating worker tasks fail closed when the task account has no `fb_uid`
-
-`tests/unit/test_extension_dry_run.py` verifies:
-
-- extension live actions are disabled by default in `content-fb.js`
-- the message router keeps mutating methods separate from read-only methods
-- mutating router methods are forced to dry-run before handler dispatch when extension live actions are disabled
-- mutating handlers check both payload dry-run and extension live guard before dangerous DOM actions
-
-## Documentation Impact Assessment
-
-The Safety Gate behavior is user-facing for anyone creating Facebook automation tasks through `/tasks`, `/posts`, or scheduled posts/messages. Existing docs under `docs/` primarily describe Google Flow production deployment and do not yet include a dedicated Facebook automation API reference. This summary records the verified behavior to prevent operators from assuming queued mutating tasks publish live by default.
+`tests/unit/test_extension_dry_run.py` verifies extension-side dry-run enforcement and DOM-action guard behavior.

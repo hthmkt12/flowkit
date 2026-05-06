@@ -1,6 +1,6 @@
 """FBKit — FastAPI entry point + WebSocket server.
 
-Replaces FlowKit main.py. Handles:
+Handles:
 1. HTTP REST API on port 8100
 2. WebSocket bridge on port 9222 (extension ↔ agent)
 3. Dashboard WebSocket for real-time updates
