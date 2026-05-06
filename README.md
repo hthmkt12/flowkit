@@ -101,6 +101,14 @@ Validated dry-run variants:
 - `COMMENT_POST`
 - `SEND_MESSAGE`
 
+Clean up smoke helper processes when you are done:
+
+```powershell
+.\scripts\stop-fbkit-smoke.ps1
+```
+
+The cleanup helper stops identifiable FBKit agent listeners on ports `8100` and `9222`, removes stale agent smoke PID files, and keeps Chrome open by default. Pass `-IncludeChrome` only if you started a dedicated smoke Chrome profile and want to close it too.
+
 ## Safety Gate Defaults
 
 FBKit centralizes mutation safety in `agent/services/safety_gate.py`.
