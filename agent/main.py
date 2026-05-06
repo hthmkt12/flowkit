@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconn
 from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 
+from agent import config
 from agent.config import API_HOST, API_PORT, WS_AUTH_ENABLED, WS_API_KEY, WS_HOST, WS_PORT
 from agent.db.schema import init_db, close_db
 from agent.services.fb_client import get_fb_client
@@ -217,6 +218,11 @@ async def get_status(_: None = Depends(require_api_key)):
         "spy_ads": spy.stats,
         "notifier": notifier.stats,
         "session": session.session_info,
+        "safety_gate": {
+            "live_actions_enabled": config.LIVE_ACTIONS_ENABLED,
+            "dry_run_default": config.DRY_RUN_DEFAULT,
+            "approval_required": config.APPROVAL_REQUIRED,
+        },
         "tasks": task_stats,
     }
 

@@ -86,6 +86,27 @@ export interface SpyAd {
   last_seen: string
 }
 
+export interface ExtensionSession {
+  fb_uid: string | null
+  logged_in: boolean
+  uptime_s: number
+}
+
+export interface AgentStatus {
+  extension: {
+    connected: boolean
+    session_count: number
+    sessions?: ExtensionSession[]
+    total_connects: number
+    total_disconnects: number
+  }
+  safety_gate: {
+    live_actions_enabled: boolean
+    dry_run_default: boolean
+    approval_required: boolean
+  }
+}
+
 // WebSocket event
 export interface WSEvent {
   type: string

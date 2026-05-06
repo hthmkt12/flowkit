@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { Activity, Users, CheckCircle, XCircle, Clock, Zap, Eye, Wifi } from 'lucide-react'
 import { fetchAPI } from '../api/client'
 import { useWebSocket } from '../api/useWebSocket'
-import type { TaskStats, Account, WSEvent } from '../types'
+import SafetyGateStatus from '../components/SafetyGateStatus'
+import type { TaskStats, Account, AgentStatus, WSEvent } from '../types'
 
 interface StatCard {
   label: string
@@ -49,17 +50,21 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [seederStats, setSeederStats] = useState<{ campaigns: number; active: number }>({ campaigns: 0, active: 0 })
   const [spyStats, setSpyStats] = useState<{ targets: number; total_ads_found: number }>({ targets: 0, total_ads_found: 0 })
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null)
   const [events, setEvents] = useState<LiveEvent[]>([])
   const { isConnected, lastEvent } = useWebSocket()
 
   const load = useCallback(async () => {
     try {
-      const [stats, accs, seed, spy] = await Promise.allSettled([
+      const [status, stats, accs, seed, spy] = await Promise.allSettled([
+        fetchAPI<AgentStatus>('/api/status'),
         fetchAPI<TaskStats>('/api/tasks/stats'),
         fetchAPI<Account[]>('/api/accounts'),
         fetchAPI<{ campaigns: number; active: number; running: boolean }>('/api/seeding/campaigns/stats'),
         fetchAPI<{ targets: number; total_ads_found: number; running: boolean }>('/api/spy/targets/stats'),
       ])
+      if (status.status === 'fulfilled') setAgentStatus(status.value)
+      else setAgentStatus(null)
       if (stats.status === 'fulfilled') setTaskStats(stats.value)
       if (accs.status === 'fulfilled') setAccounts(accs.value)
       if (seed.status === 'fulfilled') setSeederStats(seed.value)
@@ -142,6 +147,8 @@ export default function DashboardPage() {
         <span>·</span>
         <span>FBKit Agent Dashboard</span>
       </div>
+
+      <SafetyGateStatus status={agentStatus} />
 
       {/* Stat cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
