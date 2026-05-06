@@ -192,6 +192,11 @@ async def root():
     }
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/api/status")
 async def get_status(_: None = Depends(require_api_key)):
     client = get_fb_client()

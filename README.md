@@ -154,7 +154,7 @@ Before any live test:
 
 The sections below are legacy FlowKit / Google Flow documentation retained for historical context. They do not describe the current FBKit safety workflow above.
 
-> **Current FBKit readiness:** use `GET /api/status` for the active FBKit runtime and extension-session check. Historical `/health` references below belong to the legacy Google Flow archive; the latest safe-mode validation observed `/health` returning `{ "detail": "Not Found" }`.
+> **Current FBKit readiness:** use `GET /health` for a basic process check and `GET /api/status` for the active FBKit runtime and extension-session check. Historical `/health` references below belong to the legacy Google Flow archive and may describe richer legacy response fields.
 
 ## Legacy Showcase
 
