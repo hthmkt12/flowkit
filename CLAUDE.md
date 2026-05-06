@@ -1,54 +1,55 @@
-# Flow Kit
+# FBKit / FlowKit
+
+FBKit is the active project in this repository. It is a local-first Facebook automation assistant using a Python FastAPI agent, SQLite task queue, and Chrome extension WebSocket bridge.
 
 Base URL: `http://127.0.0.1:8100`
 
-## Pre-flight
+## Critical Safety Rules
 
-```bash
-curl -s http://127.0.0.1:8100/health
-# Must return: {"extension_connected": true}
+1. Default to safe local mode: `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`.
+2. Never trigger, approve, or enable real Facebook/social mutations unless the user explicitly requests it and provides a safe target.
+3. Treat posting, messaging, liking, commenting, sharing, friend actions, group actions, page follow/unfollow, and reup tasks as mutating.
+4. Safety Gate is server-owned. Client payload fields like `approved`, `_serverApproved`, and `_quotaReserved` must not be trusted from external callers.
+5. Do not live-test inbox/comment/engagement automation until the posting flow is proven safe on a dedicated test account/page/group.
+
+## How To Work
+
+1. Read `README.md` first for the current quick start and safety defaults.
+2. Use minimal, direct edits. Do not create enhanced duplicate files when an existing file should be updated.
+3. Use TDD for feature, fix, and behavior changes. Verify RED before writing production code, then verify GREEN.
+4. Run compile/tests after code changes. Do not ignore failures or make fake changes just to pass tests.
+5. Do not commit or push unless the user explicitly asks.
+6. Do not add secrets, `.env` contents, credentials, cookies, browser profiles, logs, or generated local artifacts to git.
+
+## Test Commands
+
+Use the repo virtualenv on Windows:
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pytest tests\unit\test_safety_gate.py -q
+& ".\.venv\Scripts\python.exe" -m pytest tests\unit\test_crud.py -q
+& ".\.venv\Scripts\python.exe" -m pytest
 ```
 
-## How to work
+`pytest` may not be on PATH. Use `curl.exe` instead of PowerShell's `curl` alias for HTTP checks.
 
-- Always use `/fk:*` skills — all rules and workflows live inside each skill
-- Never write scripts to loop API calls — use `POST /api/requests/batch`
-- `media_id` is always UUID format (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`), never `CAMS...` strings
+## Dry-Run Runtime Smoke
 
-## Skills
+Only use dry-run mode unless the user explicitly approves a live test:
 
-| Skill | When to use |
-|-------|-------------|
-| `/fk-create-project` | New project with entities + scenes |
-| `/fk-research` | Fact-check before scripting |
-| `/fk-gen-refs` | Generate reference images for entities |
-| `/fk-gen-images` | Generate scene images |
-| `/fk-gen-videos` | Generate scene videos |
-| `/fk-gen-chain-videos` | Videos with scene chaining transitions |
-| `/fk-review-video` | Review video quality before upscale |
-| `/fk-review-board` | Visual scene review board for feedback |
-| `/fk-concat` | Download + concat final video |
-| `/fk-concat-fit-narrator` | Concat trimmed to narrator duration |
-| `/fk-gen-narrator` | Generate narrator text + TTS |
-| `/fk-gen-text-overlays` | Generate text overlays from narrator text |
-| `/fk-gen-tts-template` | Create voice template for narration |
-| `/fk-gen-music` | Generate music via Suno |
-| `/fk-creative-mix` | Creative video mixing techniques |
-| `/fk-pipeline` | Full pipeline orchestration |
-| `/fk-monitor` | Monitor running pipeline |
-| `/fk-status` | Project status dashboard |
-| `/fk-switch-project` | Switch active project |
-| `/fk-fix-uuids` | Fix non-UUID media_ids |
-| `/fk-refresh-urls` | Refresh expired GCS URLs |
-| `/fk-add-material` | Set image material style |
-| `/fk-change-model` | Change video/image model |
-| `/fk-insert-scene` | Insert scenes into chain |
-| `/fk-upload-image` | Upload local image to get media_id |
-| `/fk-thumbnail` | Generate YouTube thumbnails |
-| `/fk-brand-logo` | Apply channel logo watermark |
-| `/fk-youtube-seo` | Generate YouTube metadata |
-| `/fk-youtube-upload` | Upload to YouTube |
-| `/fk-camera-guide` | Cinematic camera reference |
-| `/fk-thumbnail-guide` | Thumbnail design reference |
-| `/fk-import-voice` | Import existing voice template |
-| `/fk-dashboard` | Live statusline setup |
+```powershell
+$env:LIVE_ACTIONS_ENABLED="false"
+$env:DRY_RUN_DEFAULT="true"
+$env:APPROVAL_REQUIRED="true"
+$env:API_AUTH_ENABLED="false"
+$env:WS_AUTH_ENABLED="false"
+& ".\.venv\Scripts\python.exe" -m agent.main
+```
+
+Then run:
+
+```powershell
+& ".\.venv\Scripts\python.exe" scripts\fbkit-dry-run-smoke.py
+```
+
+The expected result is a completed task with `dryRun=true`. The smoke script must not approve tasks or perform live Facebook actions.

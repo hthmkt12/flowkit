@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
+from agent import config
 from agent.db import crud
 from agent.services.safety_gate import enforce_payload
 
@@ -84,6 +85,11 @@ async def approve_task(task_id: str):
         raise HTTPException(404, "Task not found")
     if task.get("status") != "PENDING":
         raise HTTPException(409, "Only PENDING tasks can be approved")
+    if not config.LIVE_ACTIONS_ENABLED:
+        raise HTTPException(
+            409,
+            "Live actions are disabled (LIVE_ACTIONS_ENABLED=false); approval cannot enable live dispatch",
+        )
 
     try:
         payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}

@@ -5,6 +5,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, date
+from json import JSONDecodeError
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -12,6 +13,7 @@ from cryptography.hazmat.primitives import hashes
 
 from agent.db.schema import get_db
 from agent.config import DATA_ENCRYPTION_KEY
+from agent.services.safety_gate import enforce_payload, is_mutating_task
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,41 @@ def _decrypt_account_row(data: dict | None) -> dict | None:
 
 def _rows_to_list(rows) -> list[dict]:
     return [dict(r) for r in rows]
+
+
+def _strip_task_server_fields(payload: dict) -> dict:
+    payload.pop("_quotaReserved", None)
+    payload.pop("_serverApproved", None)
+    payload.pop("approved", None)
+    return payload
+
+
+def _enforce_task_payload_for_insert(task_type: str, raw_payload) -> str | None:
+    if raw_payload is None:
+        payload = {}
+    elif isinstance(raw_payload, str):
+        try:
+            payload = json.loads(raw_payload or "{}")
+        except JSONDecodeError as exc:
+            if is_mutating_task(task_type):
+                raise ValueError("Mutating task payload must be valid JSON") from exc
+            return raw_payload
+    elif isinstance(raw_payload, dict):
+        payload = dict(raw_payload)
+    else:
+        if is_mutating_task(task_type):
+            raise ValueError("Mutating task payload must be a JSON object")
+        return raw_payload
+
+    if not isinstance(payload, dict):
+        if is_mutating_task(task_type):
+            raise ValueError("Mutating task payload must be a JSON object")
+        return raw_payload
+
+    if is_mutating_task(task_type):
+        payload = _strip_task_server_fields(payload)
+    payload = enforce_payload(task_type, payload)
+    return json.dumps(payload) if payload else None
 
 
 # ─── Account ────────────────────────────────────────────────
@@ -344,7 +381,20 @@ async def delete_message(message_id: str) -> bool:
 
 # ─── Task ────────────────────────────────────────────────────
 
-async def create_task(account_id: str, task_type: str, **kwargs) -> dict:
+async def create_task(
+    account_id: str,
+    task_type: str,
+    *,
+    enforce_safety: bool = True,
+    **kwargs,
+) -> dict:
+    if enforce_safety:
+        enforced_payload = _enforce_task_payload_for_insert(task_type, kwargs.get("payload"))
+        if enforced_payload is None:
+            kwargs.pop("payload", None)
+        else:
+            kwargs["payload"] = enforced_payload
+
     db = await get_db()
     tid = _new_id()
     cols = ["id", "account_id", "task_type"] + list(kwargs.keys())

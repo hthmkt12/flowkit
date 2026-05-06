@@ -108,6 +108,105 @@ async def test_create_task_strips_client_supplied_approval(test_account, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_crud_create_task_forces_direct_mutating_task_to_dry_run(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+
+    task = await crud.create_task(
+        account_id=test_account["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({
+            "content": "direct DB insert must still be safe",
+            "dryRun": False,
+            "_serverApproved": True,
+        }),
+    )
+
+    payload = json.loads(task["payload"] or "{}")
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "live_actions_disabled"
+    assert "_serverApproved" not in payload
+
+
+@pytest.mark.asyncio
+async def test_crud_create_task_preserves_direct_read_only_payload(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+
+    task = await crud.create_task(
+        account_id=test_account["id"],
+        task_type="CHECK_LOGIN",
+        payload=json.dumps({"dryRun": False, "note": "read-only stays unchanged"}),
+    )
+
+    payload = json.loads(task["payload"] or "{}")
+    assert payload == {"dryRun": False, "note": "read-only stays unchanged"}
+
+
+@pytest.mark.asyncio
+async def test_crud_create_task_internal_trusted_caller_can_preserve_payload(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+    raw_payload = {"content": "trusted fixture", "dryRun": False, "_serverApproved": True}
+
+    task = await crud.create_task(
+        account_id=test_account["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps(raw_payload),
+        enforce_safety=False,
+    )
+
+    assert json.loads(task["payload"] or "{}") == raw_payload
+
+
+@pytest.mark.asyncio
+async def test_crud_create_task_rejects_malformed_mutating_payload(test_account):
+    with pytest.raises(ValueError, match="valid JSON"):
+        await crud.create_task(
+            account_id=test_account["id"],
+            task_type="POST_TEXT",
+            payload="{not-json",
+        )
+
+
+@pytest.mark.asyncio
+async def test_crud_create_task_rejects_non_object_mutating_payload(test_account):
+    with pytest.raises(ValueError, match="JSON object"):
+        await crud.create_task(
+            account_id=test_account["id"],
+            task_type="POST_TEXT",
+            payload=json.dumps(["not", "an", "object"]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_approve_task_rejects_when_live_actions_disabled(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", False, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
+    task = await crud.create_task(
+        account_id=test_account["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({"content": "must remain dry-run"}),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tasks_api.approve_task(task["id"])
+
+    stored_task = await crud.get_task(task["id"])
+    payload = json.loads(stored_task["payload"] or "{}")
+
+    assert exc_info.value.status_code == 409
+    assert "Live actions are disabled" in exc_info.value.detail
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "live_actions_disabled"
+    assert "_serverApproved" not in payload
+
+
+@pytest.mark.asyncio
 async def test_approve_task_allows_live_dispatch_when_live_actions_enabled(test_account, monkeypatch):
     captured = {}
 
@@ -217,6 +316,7 @@ async def test_approve_task_rejects_malformed_payload(test_account, monkeypatch)
         account_id=test_account["id"],
         task_type="POST_TEXT",
         payload="{not-json",
+        enforce_safety=False,
     )
 
     with pytest.raises(HTTPException) as exc_info:
