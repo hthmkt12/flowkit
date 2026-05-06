@@ -132,6 +132,19 @@ Verified in `agent/config.py`:
 | `DRY_RUN_DEFAULT` | `true` | Default dry-run value when live actions are allowed and no explicit flag is provided |
 | `APPROVAL_REQUIRED` | `true` | Requires payload approval before live mutation |
 
+## Runtime Dry-Run Validation
+
+Runtime safe-mode smoke validation is recorded in `plans/reports/260506-1929-fbkit-dry-run-runtime-validation-report.md`.
+
+Validated dry-run variants:
+
+- `POST_TEXT`
+- `LIKE_POST`
+- `COMMENT_POST`
+- `SEND_MESSAGE`
+
+The validation used `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`, `API_AUTH_ENABLED=false`, and `WS_AUTH_ENABLED=false`. No tasks were approved, no approval endpoints were called, and no live Facebook actions were enabled.
+
 ## Test Coverage
 
 `tests/unit/test_safety_gate.py` verifies:
