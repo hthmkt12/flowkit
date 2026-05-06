@@ -20,3 +20,8 @@ extension/_metadata/
 AGENTS.md
 GEMINI.md
 .fk-setup.json
+
+# Local/generated agent artifacts
+repomix-output.xml
+test_reup.py
+*.log
