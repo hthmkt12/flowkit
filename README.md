@@ -108,6 +108,13 @@ Run a specific dry-run variant:
 
 It does **not** approve tasks and does **not** request live dispatch.
 
+Validated dry-run variants recorded in `plans/reports/260506-1929-fbkit-dry-run-runtime-validation-report.md`:
+
+- `POST_TEXT`
+- `LIKE_POST`
+- `COMMENT_POST`
+- `SEND_MESSAGE`
+
 ## Safety Gate Defaults
 
 FBKit centralizes mutation safety in `agent/services/safety_gate.py`.
