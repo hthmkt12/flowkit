@@ -19,6 +19,18 @@ $env:WS_AUTH_ENABLED="false"
 .\.venv\Scripts\python.exe -m agent.main
 ```
 
+Or use the safe Windows helper at `scripts/start-fbkit-safe.ps1`:
+
+```powershell
+.\scripts\start-fbkit-safe.ps1
+```
+
+Preview the safe environment and command without starting the agent:
+
+```powershell
+.\scripts\start-fbkit-safe.ps1 -PrintOnly
+```
+
 Bash/Git Bash/WSL:
 
 ```bash
