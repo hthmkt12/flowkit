@@ -11,6 +11,7 @@ const AGENT_API = "http://127.0.0.1:8100";
 const RECONNECT_DELAY_MS = 3000;
 const RECONNECT_JITTER_MS = 2000;
 const PING_INTERVAL_MS = 25000;
+const EXTENSION_LIVE_ACTIONS_ENABLED = false;
 
 let ws = null;
 let pingTimer = null;
@@ -20,6 +21,16 @@ let reconnectAttempt = 0;
 async function getApiKey() {
   const data = await chrome.storage.local.get(["fbkitApiKey"]);
   return (data.fbkitApiKey || "").trim();
+}
+
+async function getProfileIdentity() {
+  const data = await chrome.storage.local.get(["fbkitProfileId", "fbkitProfileName"]);
+  const profileId = data.fbkitProfileId || `profile_${Math.random().toString(36).slice(2, 10)}`;
+  const profileName = data.fbkitProfileName || profileId;
+  if (!data.fbkitProfileId || !data.fbkitProfileName) {
+    await chrome.storage.local.set({ fbkitProfileId: profileId, fbkitProfileName: profileName });
+  }
+  return { profileId, profileName };
 }
 
 async function buildWsUrl() {
@@ -67,18 +78,30 @@ async function connectWS() {
 
     // Announce ourselves with FB UID (from c_user cookie)
     const fbUid = await getFbUid();
+    const profileIdentity = await getProfileIdentity();
     ws.send(JSON.stringify({
       type: "extension_ready",
       fb_uid: fbUid,
       loggedIn: !!fbUid,
+      extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
+      profileId: profileIdentity.profileId,
+      profileName: profileIdentity.profileName,
       url: "",
     }));
 
     // Start ping keepalive
     clearInterval(pingTimer);
-    pingTimer = setInterval(() => {
+    pingTimer = setInterval(async () => {
       if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: "ping" }));
+        const currentFbUid = await getFbUid();
+        ws.send(JSON.stringify({
+          type: "ping",
+          fb_uid: currentFbUid,
+          loggedIn: !!currentFbUid,
+          extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
+          profileId: profileIdentity.profileId,
+          profileName: profileIdentity.profileName,
+        }));
       }
     }, PING_INTERVAL_MS);
   };
@@ -130,6 +153,17 @@ async function dispatchToContentScript(command) {
   const { method, params } = command;
 
   try {
+    if (params?.expectedFbUid) {
+      const currentFbUid = await getFbUid();
+      if (currentFbUid !== params.expectedFbUid) {
+        return {
+          error: "Facebook account changed before dispatch",
+          expectedFbUid: params.expectedFbUid,
+          currentFbUid,
+        };
+      }
+    }
+
     // Find a Facebook tab
     const tabs = await chrome.tabs.query({
       url: ["https://www.facebook.com/*", "https://web.facebook.com/*"],

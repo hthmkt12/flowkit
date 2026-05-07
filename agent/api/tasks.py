@@ -15,6 +15,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 def _strip_external_server_fields(payload: dict) -> dict:
     payload.pop("_quotaReserved", None)
     payload.pop("_serverApproved", None)
+    payload.pop("_liveArmId", None)
     payload.pop("approved", None)
     return payload
 
@@ -37,6 +38,13 @@ class EngagementCreate(BaseModel):
     reaction: Optional[str] = "LIKE"
     comment: Optional[str] = None
     target_type: Optional[str] = "TIMELINE"
+
+
+class LiveArmCreate(BaseModel):
+    account_id: str
+    task_types: list[str]
+    ttl_seconds: int = 300
+    created_by: Optional[str] = None
 
 
 @router.get("")
@@ -90,13 +98,19 @@ async def approve_task(task_id: str):
             409,
             "Live actions are disabled (LIVE_ACTIONS_ENABLED=false); approval cannot enable live dispatch",
         )
+    if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
+        raise HTTPException(409, "API_AUTH_ENABLED and WS_AUTH_ENABLED must be true before live approval")
 
     try:
         payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
     except JSONDecodeError:
         raise HTTPException(400, "Task payload is not valid JSON")
+    arm = await crud.find_active_live_arm(task.get("account_id"), task["task_type"])
+    if not arm:
+        raise HTTPException(409, "Live task approval requires an active matching live arm")
     payload.pop("safetyReason", None)
     payload["_serverApproved"] = True
+    payload["_liveArmId"] = arm["id"]
     payload["dryRun"] = False
     payload = enforce_payload(task["task_type"], payload)
     approved_task = await crud.approve_pending_task(task_id, json.dumps(payload))
@@ -109,6 +123,27 @@ async def approve_task(task_id: str):
             f"Approved task {task_id[:8]} ({task.get('task_type')}) for live dispatch",
         )
     return approved_task
+
+
+@router.post("/live-arm")
+async def arm_live_actions(body: LiveArmCreate):
+    try:
+        return await crud.arm_live_actions(
+            account_id=body.account_id,
+            task_types=body.task_types,
+            ttl_seconds=body.ttl_seconds,
+            created_by=body.created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.post("/live-arm/{arm_id}/revoke")
+async def revoke_live_arm(arm_id: str):
+    arm = await crud.revoke_live_arm(arm_id)
+    if not arm:
+        raise HTTPException(404, "Live arm not found")
+    return arm
 
 
 @router.post("/engage")

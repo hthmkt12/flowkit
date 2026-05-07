@@ -97,6 +97,34 @@ def test_extension_live_actions_disabled_by_default():
     assert "!EXTENSION_LIVE_ACTIONS_ENABLED" in source
 
 
+def test_background_reports_extension_live_guard_state():
+    background = (EXTENSION_SCRIPT.parent / "background.js").read_text(encoding="utf-8")
+
+    assert "const EXTENSION_LIVE_ACTIONS_ENABLED = false;" in background
+    assert "extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED" in background
+
+
+def test_background_reports_profile_identity_and_heartbeat():
+    background = (EXTENSION_SCRIPT.parent / "background.js").read_text(encoding="utf-8")
+
+    assert "async function getProfileIdentity()" in background
+    assert "const currentFbUid = await getFbUid();" in background
+    assert "fb_uid: currentFbUid" in background
+    assert "loggedIn: !!currentFbUid" in background
+    assert "profileId:" in background
+    assert "profileName:" in background
+    assert 'type: "ping"' in background
+    assert "profileIdentity" in background
+
+
+def test_background_refuses_dispatch_when_expected_fb_uid_changes():
+    background = (EXTENSION_SCRIPT.parent / "background.js").read_text(encoding="utf-8")
+
+    assert "params?.expectedFbUid" in background
+    assert "currentFbUid !== params.expectedFbUid" in background
+    assert "Facebook account changed before dispatch" in background
+
+
 def test_router_defines_mutating_methods_separately_from_read_only_methods():
     source = _source()
 

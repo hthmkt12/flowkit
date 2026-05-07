@@ -9,6 +9,18 @@ from agent.services.fb_client import get_fb_client
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
+def _select_best_session_by_uid(sessions: list[dict], include_stale: bool) -> dict:
+    candidates = [
+        session
+        for session in sessions
+        if session.get("fb_uid") and (include_stale or not session.get("stale"))
+    ]
+    best_by_uid = {}
+    for session in sorted(candidates, key=lambda s: s.get("last_seen_age_s") or 0):
+        best_by_uid.setdefault(session["fb_uid"], session)
+    return best_by_uid
+
+
 class AccountCreate(BaseModel):
     name: str
     fb_uid: Optional[str] = None
@@ -47,15 +59,22 @@ async def get_extension_status():
     """
     client = get_fb_client()
     sessions = client.ws_stats["sessions"]
-    online_uids = {s["fb_uid"] for s in sessions if s.get("fb_uid")}
+    sessions_by_uid = _select_best_session_by_uid(sessions, include_stale=False)
+    all_sessions_by_uid = _select_best_session_by_uid(sessions, include_stale=True)
     accounts = await crud.list_accounts()
     result = []
     for acc in accounts:
         fb_uid = acc.get("fb_uid")
+        session = sessions_by_uid.get(fb_uid) or all_sessions_by_uid.get(fb_uid)
         result.append({
             "id": acc["id"],
             "fb_uid": fb_uid,
-            "extension_online": fb_uid in online_uids if fb_uid else False,
+            "extension_online": bool(fb_uid and session and not session.get("stale")),
+            "extension_health": session.get("health") if session else "offline",
+            "last_seen_age_s": session.get("last_seen_age_s") if session else None,
+            "profile_id": session.get("profile_id") if session else None,
+            "profile_name": session.get("profile_name") if session else None,
+            "extension_live_actions_enabled": session.get("extension_live_actions_enabled") if session else None,
         })
     return {
         "sessions": sessions,
@@ -98,3 +117,8 @@ async def delete_account(account_id: str):
 @router.get("/{account_id}/activities")
 async def get_activities(account_id: str, limit: int = 50):
     return await crud.list_activities(account_id=account_id, limit=limit)
+
+
+@router.get("/{account_id}/queue-summary")
+async def get_account_queue_summary(account_id: str):
+    return await crud.get_account_queue_summary(account_id)

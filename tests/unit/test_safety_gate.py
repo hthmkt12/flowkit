@@ -211,14 +211,25 @@ async def test_approve_task_allows_live_dispatch_when_live_actions_enabled(test_
     captured = {}
 
     class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return True
+
         async def post_text(self, **kwargs):
             captured.update(kwargs)
             return {"success": True}
 
     monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
     monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
     monkeypatch.setattr(processor, "get_fb_client", lambda: FakeClient())
+    arm = await crud.arm_live_actions(
+        account_id=test_account["id"],
+        task_types=["POST_TEXT"],
+        ttl_seconds=300,
+        created_by="unit-test",
+    )
 
     task = await tasks_api.create_task(
         tasks_api.TaskCreate(
@@ -234,12 +245,13 @@ async def test_approve_task_allows_live_dispatch_when_live_actions_enabled(test_
     result = await worker._dispatch(
         "POST_TEXT",
         payload,
-        {"id": task["id"], "task_type": "POST_TEXT"},
+        {"id": task["id"], "task_type": "POST_TEXT", "account_id": test_account["id"]},
         fb_uid="fb-1",
     )
 
     assert result == {"success": True}
     assert captured["dry_run"] is False
+    assert payload["_liveArmId"] == arm["id"]
 
 
 @pytest.mark.asyncio
@@ -291,7 +303,15 @@ async def test_approve_task_rechecks_pending_status_atomically(test_account, mon
 @pytest.mark.asyncio
 async def test_approve_task_logs_activity_for_audit(test_account, monkeypatch):
     monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+    await crud.arm_live_actions(
+        account_id=test_account["id"],
+        task_types=["POST_TEXT"],
+        ttl_seconds=300,
+        created_by="unit-test",
+    )
     task = await crud.create_task(
         account_id=test_account["id"],
         task_type="POST_TEXT",
@@ -311,6 +331,8 @@ async def test_approve_task_logs_activity_for_audit(test_account, monkeypatch):
 @pytest.mark.asyncio
 async def test_approve_task_rejects_malformed_payload(test_account, monkeypatch):
     monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
     task = await crud.create_task(
         account_id=test_account["id"],
@@ -525,6 +547,9 @@ async def test_worker_dispatch_forces_mutating_task_to_dry_run(monkeypatch):
     captured = {}
 
     class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return True
+
         async def post_text(self, **kwargs):
             captured.update(kwargs)
             return {"success": True}
@@ -673,9 +698,24 @@ async def test_rate_limit_allows_forced_dry_run_when_limit_exceeded(test_account
 @pytest.mark.asyncio
 async def test_rate_limit_reserves_bulk_message_quota_per_recipient(test_account, monkeypatch):
     monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", False, raising=False)
     monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", False, raising=False)
     monkeypatch.setattr("agent.config.RATE_LIMIT_MESSAGES_PER_DAY", 50, raising=False)
+
+    class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return True
+
+    monkeypatch.setattr(processor, "get_fb_client", lambda: FakeClient())
+
+    arm = await crud.arm_live_actions(
+        account_id=test_account["id"],
+        task_types=["SEND_BULK_MESSAGE"],
+        ttl_seconds=300,
+        created_by="unit-test",
+    )
     await crud.update_account(
         test_account["id"],
         daily_messages=48,
@@ -689,6 +729,7 @@ async def test_rate_limit_reserves_bulk_message_quota_per_recipient(test_account
         "payload": json.dumps({
             "content": "quota reserve",
             "recipients": [{"name": "A"}, {"name": "B"}],
+            "_liveArmId": arm["id"],
         }),
     })
 
@@ -727,9 +768,24 @@ async def test_rate_limit_rejects_bulk_message_when_recipient_count_exceeds_rema
 @pytest.mark.asyncio
 async def test_rate_limit_does_not_reserve_quota_twice_for_same_task(test_account, monkeypatch):
     monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", False, raising=False)
     monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", False, raising=False)
     monkeypatch.setattr("agent.config.RATE_LIMIT_POSTS_PER_DAY", 20, raising=False)
+
+    class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return True
+
+    monkeypatch.setattr(processor, "get_fb_client", lambda: FakeClient())
+
+    arm = await crud.arm_live_actions(
+        account_id=test_account["id"],
+        task_types=["POST_TEXT"],
+        ttl_seconds=300,
+        created_by="unit-test",
+    )
     await crud.update_account(
         test_account["id"],
         daily_posts=5,
@@ -738,7 +794,8 @@ async def test_rate_limit_does_not_reserve_quota_twice_for_same_task(test_accoun
     task = await crud.create_task(
         account_id=test_account["id"],
         task_type="POST_TEXT",
-        payload=json.dumps({"content": "reserve once"}),
+        payload=json.dumps({"content": "reserve once", "dryRun": False, "_serverApproved": True, "_liveArmId": arm["id"]}),
+        enforce_safety=False,
     )
 
     worker = processor.WorkerController()
@@ -814,6 +871,9 @@ async def test_worker_dispatch_routes_post_link_as_dry_run_text_post(monkeypatch
     captured = {}
 
     class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return True
+
         async def post_text(self, **kwargs):
             captured.update(kwargs)
             return {"success": True}
@@ -841,24 +901,35 @@ async def test_worker_dispatch_routes_post_link_as_dry_run_text_post(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_worker_dispatch_allows_server_approved_live_task(monkeypatch):
+async def test_worker_dispatch_allows_server_approved_live_task(db_ready, test_account, monkeypatch):
     captured = {}
 
     class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return True
+
         async def post_text(self, **kwargs):
             captured.update(kwargs)
             return {"success": True}
 
     monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", True, raising=False)
     monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
     monkeypatch.setattr(processor, "get_fb_client", lambda: FakeClient())
+    arm = await crud.arm_live_actions(
+        account_id=test_account["id"],
+        task_types=["POST_TEXT"],
+        ttl_seconds=300,
+        created_by="unit-test",
+    )
 
     worker = processor.WorkerController()
     result = await worker._dispatch(
         "POST_TEXT",
-        {"content": "approved live", "_serverApproved": True, "dryRun": False},
-        {"id": "task-1", "task_type": "POST_TEXT"},
+        {"content": "approved live", "_serverApproved": True, "dryRun": False, "_liveArmId": arm["id"]},
+        {"id": "task-1", "task_type": "POST_TEXT", "account_id": test_account["id"]},
         fb_uid="fb-1",
     )
 

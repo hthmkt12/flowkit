@@ -4,15 +4,18 @@ Polls for pending tasks, dispatches to FBClient, updates results.
 Enforces rate limits and human-like session management.
 """
 import asyncio
+import inspect
 import json
 import logging
 import traceback
+from datetime import date
 
 from agent.config import (
     MAX_CONCURRENT_TASKS,
     MAX_RETRIES,
     POLL_INTERVAL,
 )
+from agent import config
 from agent.db import crud
 from agent.services.fb_client import get_fb_client
 from agent.services.human_delay import action_delay, long_delay, get_session_manager
@@ -108,13 +111,20 @@ def _bulk_recipients_from_payload(payload: dict) -> list[dict]:
 class WorkerController:
     """Controls the background task processor."""
 
-    def __init__(self):
+    def __init__(self, node_id: str | None = None):
+        self.node_id = node_id or config.FBKIT_NODE_ID
         self._shutdown = False
         self._active_count = 0
+        self._active_live_account_ids: set[str] = set()
+        self.last_rate_limit_error: str | None = None
 
     @property
     def active_count(self) -> int:
         return self._active_count
+
+    @property
+    def active_live_account_ids(self) -> set[str]:
+        return set(self._active_live_account_ids)
 
     def request_shutdown(self, *args):
         self._shutdown = True
@@ -146,7 +156,7 @@ class WorkerController:
 
                 # Check extension connection
                 client = get_fb_client()
-                if not client.connected:
+                if not client.has_fresh_session:
                     await asyncio.sleep(POLL_INTERVAL)
                     continue
 
@@ -156,22 +166,22 @@ class WorkerController:
                     continue
 
                 # Claim next task before launching async processing to avoid duplicate dispatch.
-                task = await crud.claim_next_pending_task()
+                task = await crud.claim_next_pending_task(
+                    self._active_live_account_ids,
+                    node_id=self.node_id,
+                    live_lease_ttl_seconds=config.LIVE_ACCOUNT_LEASE_TTL_SECONDS,
+                )
                 if task is None:
                     await asyncio.sleep(POLL_INTERVAL)
                     continue
-
-                # Check rate limit
-                if not await self._check_rate_limit(task):
-                    logger.warning("Rate limit hit for %s (account %s), skipping",
-                                   task["task_type"], task["account_id"][:8])
-                    await crud.update_task(task["id"], status="FAILED",
-                                           error_message="Daily rate limit exceeded")
+                prepared = await self._prepare_claimed_task(task)
+                if prepared is None:
                     continue
+                task, live_account_id, live_lease = prepared
 
                 # Process task
                 self._active_count += 1
-                asyncio.create_task(self._process_task(task))
+                asyncio.create_task(self._process_task(task, live_account_id=live_account_id, live_lease=live_lease))
 
             except Exception as e:
                 logger.error("Worker loop error: %s", e)
@@ -181,12 +191,33 @@ class WorkerController:
 
     async def _check_rate_limit(self, task: dict) -> bool:
         """Reserve live-action quota for a task unless Safety Gate forces dry-run."""
-        from agent import config
+        self.last_rate_limit_error = None
         task_type = task["task_type"]
         payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
         payload = enforce_payload(task_type, payload)
         if dry_run_from_payload(payload):
             return True
+
+        if is_mutating_task(task_type):
+            if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
+                self.last_rate_limit_error = "Live dispatch requires API_AUTH_ENABLED and WS_AUTH_ENABLED"
+                return False
+            arm = await crud.get_active_live_arm(payload.get("_liveArmId"), task.get("account_id"), task_type)
+            if not arm:
+                self.last_rate_limit_error = "Live mutating task requires an active matching live arm"
+                return False
+            fb_uid = None
+            if task.get("account_id"):
+                account = await crud.get_account(task["account_id"])
+                if account:
+                    fb_uid = account.get("fb_uid")
+            if not fb_uid:
+                self.last_rate_limit_error = "Live mutating task requires account fb_uid for exact routing"
+                return False
+            client = get_fb_client()
+            if not client.session_live_guard_enabled(fb_uid=fb_uid):
+                self.last_rate_limit_error = "Extension live-action guard is disabled or unknown"
+                return False
 
         counter_field = _COUNTER_MAP.get(task_type)
         if not counter_field:
@@ -197,11 +228,13 @@ class WorkerController:
             units = _quota_units_for_task(task_type, payload)
         except ValueError as exc:
             logger.warning("Invalid quota payload for %s: %s", task_type, exc)
+            self.last_rate_limit_error = str(exc)
             return False
         reservation = payload.get("_quotaReserved") or {}
         if (
             reservation.get("counter") == counter_field
             and int(reservation.get("units", 0)) >= units
+            and reservation.get("date") == date.today().isoformat()
         ):
             return True
 
@@ -212,40 +245,112 @@ class WorkerController:
             limit,
         )
         if reserved and task.get("id"):
-            payload["_quotaReserved"] = {"counter": counter_field, "units": units}
+            payload["_quotaReserved"] = {
+                "counter": counter_field,
+                "units": units,
+                "date": date.today().isoformat(),
+            }
             await crud.update_task(task["id"], payload=json.dumps(payload))
+        if not reserved:
+            self.last_rate_limit_error = "Daily rate limit exceeded"
         return reserved
 
-    async def _process_task(self, task: dict):
+    async def _fail_task_for_rate_limit(self, task: dict):
+        """Persist the specific preflight/quota reason for skipped tasks."""
+        reason = self.last_rate_limit_error or "Daily rate limit exceeded"
+        logger.warning(
+            "Task preflight failed for %s (account %s): %s",
+            task["task_type"],
+            (task.get("account_id") or "")[:8],
+            reason,
+        )
+        await crud.update_task(task["id"], status="FAILED", error_message=reason)
+
+    async def _handle_preflight_failure(self, task: dict, live_lease: dict | None = None):
+        """Fail pre-dispatch tasks and release any DB lease acquired at claim time."""
+        live_lease = live_lease or task.pop("_live_account_lease", None)
+        try:
+            await self._fail_task_for_rate_limit(task)
+        finally:
+            if live_lease:
+                try:
+                    await crud.release_live_account_lease(
+                        live_lease["account_id"],
+                        live_lease["task_id"],
+                        live_lease["node_id"],
+                    )
+                except Exception as exc:
+                    logger.error("Failed to release live account lease after preflight failure: %s", exc)
+
+    async def _prepare_claimed_task(self, task: dict) -> tuple[dict, str | None, dict | None] | None:
+        """Run pre-dispatch checks and return processing metadata, cleaning leases on failure."""
+        live_lease = task.pop("_live_account_lease", None)
+        try:
+            if not await self._check_rate_limit(task):
+                await self._handle_preflight_failure(task, live_lease=live_lease)
+                return None
+            live_account_id = self._mark_live_account_if_needed(task)
+            return task, live_account_id, live_lease
+        except Exception as exc:
+            self.last_rate_limit_error = str(exc)[:500]
+            await self._handle_preflight_failure(task, live_lease=live_lease)
+            return None
+
+    def _mark_live_account_if_needed(self, task: dict) -> str | None:
+        """Track one active live mutating task per account before async dispatch."""
+        account_id = task.get("account_id")
+        if not account_id or not is_mutating_task(task.get("task_type", "")):
+            return None
+        payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
+        payload = enforce_payload(task["task_type"], payload)
+        if dry_run_from_payload(payload):
+            return None
+        self._active_live_account_ids.add(account_id)
+        return account_id
+
+    def _clear_live_account(self, account_id: str | None):
+        if account_id:
+            self._active_live_account_ids.discard(account_id)
+
+    async def _process_task(
+        self,
+        task: dict,
+        live_account_id: str | None = None,
+        live_lease: dict | None = None,
+    ):
         """Process a single task."""
         task_id = task["id"]
         task_type = task["task_type"]
-        session = get_session_manager()
         started_at_ms = utc_now_ms()
-        payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
-        payload = enforce_payload(task_type, payload)
-        is_dry_run = dry_run_from_payload(payload)
-        strategy_url = _strategy_url_from_payload(payload)
-
-        # Resolve the fb_uid for this account so we route to the right extension
-        fb_uid: str | None = None
-        if task.get("account_id"):
-            account = await crud.get_account(task["account_id"])
-            if account:
-                fb_uid = account.get("fb_uid")  # may be None for legacy accounts
-
-        # Load learned strategy for this task type (AutoBrowse pattern)
-        strategy = await crud.get_strategy(task_type, strategy_url)
-        strategy_id = strategy["id"] if strategy else None
-        if strategy:
-            logger.info(
-                "Task %s (%s) using strategy for %s: %d successes, %d failures",
-                task_id[:8], task_type, strategy.get("url_pattern", strategy_url),
-                strategy.get("success_count", 0),
-                strategy.get("fail_count", 0),
-            )
+        strategy = None
+        strategy_id = None
+        strategy_url = "*"
 
         try:
+            session = get_session_manager()
+            payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
+            payload = enforce_payload(task_type, payload)
+            is_dry_run = dry_run_from_payload(payload)
+            strategy_url = _strategy_url_from_payload(payload)
+
+            # Resolve the fb_uid for this account so we route to the right extension
+            fb_uid: str | None = None
+            if task.get("account_id"):
+                account = await crud.get_account(task["account_id"])
+                if account:
+                    fb_uid = account.get("fb_uid")  # may be None for legacy accounts
+
+            # Load learned strategy for this task type (AutoBrowse pattern)
+            strategy = await crud.get_strategy(task_type, strategy_url)
+            strategy_id = strategy["id"] if strategy else None
+            if strategy:
+                logger.info(
+                    "Task %s (%s) using strategy for %s: %d successes, %d failures",
+                    task_id[:8], task_type, strategy.get("url_pattern", strategy_url),
+                    strategy.get("success_count", 0),
+                    strategy.get("fail_count", 0),
+                )
+
             # Mark as processing
             await crud.update_task(task_id, status="PROCESSING",
                                    started_at=utc_now_iso())
@@ -255,7 +360,9 @@ class WorkerController:
                 raise ValueError("Validation: fb_uid required for live mutating task")
 
             # Human-like delay before action
-            await action_delay()
+            delay_result = action_delay()
+            if inspect.isawaitable(delay_result):
+                await delay_result
 
             # Dispatch to handler
             result = await self._dispatch(task_type, payload, task, fb_uid=fb_uid,
@@ -380,6 +487,16 @@ class WorkerController:
                 asyncio.create_task(notifier.notify_task_failed(task, error_message))
 
         finally:
+            if live_lease:
+                try:
+                    await crud.release_live_account_lease(
+                        live_lease["account_id"],
+                        live_lease["task_id"],
+                        live_lease["node_id"],
+                    )
+                except Exception as exc:
+                    logger.error("Failed to release live account lease: %s", exc)
+            self._clear_live_account(live_account_id)
             self._active_count -= 1
 
     async def _dispatch(self, task_type: str, payload: dict, task: dict,
@@ -403,6 +520,15 @@ class WorkerController:
             }
         payload = enforce_payload(task_type, payload)
         dry_run = dry_run_from_payload(payload)
+
+        if is_mutating_task(task_type) and not dry_run:
+            if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
+                return {"error": "Live dispatch requires API_AUTH_ENABLED and WS_AUTH_ENABLED"}
+            arm = await crud.get_active_live_arm(payload.get("_liveArmId"), task.get("account_id"), task_type)
+            if not arm:
+                return {"error": "Live mutating task requires an active matching live arm"}
+            if not client.session_live_guard_enabled(fb_uid=fb_uid):
+                return {"error": "Extension live-action guard is disabled or unknown"}
 
         if task_type == "CHECK_LOGIN":
             return await client.check_login(fb_uid=fb_uid)

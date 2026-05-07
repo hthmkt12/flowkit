@@ -4,7 +4,7 @@ import fnmatch
 import json
 import logging
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from json import JSONDecodeError
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -12,9 +12,10 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
 from agent.db.schema import get_db
+from agent import config
 from agent.config import DATA_ENCRYPTION_KEY
-from agent.services.safety_gate import enforce_payload, is_mutating_task
-from agent.utils.time import utc_now_iso
+from agent.services.safety_gate import MUTATING_TASK_TYPES, dry_run_from_payload, enforce_payload, is_mutating_task
+from agent.utils.time import utc_now, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ def _rows_to_list(rows) -> list[dict]:
 def _strip_task_server_fields(payload: dict) -> dict:
     payload.pop("_quotaReserved", None)
     payload.pop("_serverApproved", None)
+    payload.pop("_liveArmId", None)
     payload.pop("approved", None)
     return payload
 
@@ -470,21 +472,41 @@ async def get_next_pending_task() -> dict | None:
     return _row_to_dict(await cur.fetchone())
 
 
-async def claim_next_pending_task() -> dict | None:
+async def claim_next_pending_task(
+    excluded_live_account_ids: set[str] | None = None,
+    node_id: str | None = None,
+    live_lease_ttl_seconds: int | None = None,
+) -> dict | None:
     """Atomically move the next ready task to PROCESSING and return it."""
     db = await get_db()
     now = utc_now_iso()
+    excluded_live_account_ids = excluded_live_account_ids or set()
     cur = await db.execute(
-        "SELECT id FROM task WHERE status = 'PENDING' "
+        "SELECT id, account_id, task_type, payload FROM task WHERE status = 'PENDING' "
         "AND (scheduled_at IS NULL OR scheduled_at <= ?) "
-        "ORDER BY priority DESC, created_at ASC LIMIT 1",
+        "ORDER BY priority DESC, created_at ASC LIMIT 500",
         (now,),
     )
-    row = await cur.fetchone()
-    if row is None:
-        return None
+    rows = await cur.fetchall()
+    task_id = None
+    lease = None
+    for row in rows:
+        if _task_is_blocked_by_live_account(row, excluded_live_account_ids):
+            continue
+        if node_id and _task_requires_live_account_lease(row):
+            lease = await acquire_live_account_lease(
+                row["account_id"],
+                row["id"],
+                node_id,
+                live_lease_ttl_seconds,
+            )
+            if lease is None:
+                continue
+        task_id = row["id"]
+        break
 
-    task_id = row["id"]
+    if task_id is None:
+        return None
     cur = await db.execute(
         "UPDATE task SET status = 'PROCESSING', started_at = ?, updated_at = ? "
         "WHERE id = ? AND status = 'PENDING'",
@@ -492,8 +514,42 @@ async def claim_next_pending_task() -> dict | None:
     )
     await db.commit()
     if cur.rowcount != 1:
+        if lease:
+            await release_live_account_lease(lease["account_id"], lease["task_id"], lease["node_id"])
         return None
-    return await get_task(task_id)
+    task = await get_task(task_id)
+    if task and lease:
+        task["_live_account_lease"] = lease
+    return task
+
+
+def _task_is_blocked_by_live_account(row, excluded_live_account_ids: set[str]) -> bool:
+    account_id = row["account_id"]
+    if not account_id or account_id not in excluded_live_account_ids:
+        return False
+    if not is_mutating_task(row["task_type"]):
+        return False
+    payload = {}
+    if row["payload"]:
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except JSONDecodeError:
+            return True
+    payload = enforce_payload(row["task_type"], payload)
+    return not dry_run_from_payload(payload)
+
+
+def _task_requires_live_account_lease(row) -> bool:
+    if not row["account_id"] or not is_mutating_task(row["task_type"]):
+        return False
+    payload = {}
+    if row["payload"]:
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except JSONDecodeError:
+            return True
+    payload = enforce_payload(row["task_type"], payload)
+    return not dry_run_from_payload(payload)
 
 
 async def cancel_task(task_id: str) -> dict | None:
@@ -556,6 +612,184 @@ async def list_activities(account_id: str = None, limit: int = 50) -> list[dict]
     return _rows_to_list(await cur.fetchall())
 
 
+# ─── Live Arm ────────────────────────────────────────────────
+
+def _require_live_arm_auth_enabled():
+    if not config.API_AUTH_ENABLED:
+        raise ValueError("API_AUTH_ENABLED must be true before arming live actions")
+    if not config.WS_AUTH_ENABLED:
+        raise ValueError("WS_AUTH_ENABLED must be true before arming live actions")
+
+
+def live_auth_ready() -> bool:
+    return bool(config.API_AUTH_ENABLED and config.WS_AUTH_ENABLED)
+
+
+def _lease_expires_at(ttl_seconds: int | None) -> str:
+    ttl = max(60, min(3600, int(ttl_seconds or config.LIVE_ACCOUNT_LEASE_TTL_SECONDS)))
+    return (utc_now() + timedelta(seconds=ttl)).replace(microsecond=0).isoformat()
+
+
+async def acquire_live_account_lease(
+    account_id: str,
+    task_id: str,
+    node_id: str,
+    ttl_seconds: int | None = None,
+) -> dict | None:
+    """Acquire or reclaim an expired account lease for live mutating work."""
+    if not account_id or not task_id or not node_id:
+        return None
+    db = await get_db()
+    now = utc_now_iso()
+    expires_at = _lease_expires_at(ttl_seconds)
+    await db.execute(
+        "INSERT INTO live_account_lease "
+        "(account_id, task_id, node_id, acquired_at, heartbeat_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(account_id) DO UPDATE SET "
+        "task_id = excluded.task_id, node_id = excluded.node_id, "
+        "acquired_at = excluded.acquired_at, heartbeat_at = excluded.heartbeat_at, "
+        "expires_at = excluded.expires_at "
+        "WHERE live_account_lease.expires_at <= ?",
+        (account_id, task_id, node_id, now, now, expires_at, now),
+    )
+    await db.commit()
+    cur = await db.execute(
+        "SELECT * FROM live_account_lease WHERE account_id = ? AND task_id = ? AND node_id = ?",
+        (account_id, task_id, node_id),
+    )
+    return _row_to_dict(await cur.fetchone())
+
+
+async def release_live_account_lease(account_id: str, task_id: str, node_id: str) -> bool:
+    """Release only the lease held by the matching account/task/node tuple."""
+    db = await get_db()
+    cur = await db.execute(
+        "DELETE FROM live_account_lease WHERE account_id = ? AND task_id = ? AND node_id = ?",
+        (account_id, task_id, node_id),
+    )
+    await db.commit()
+    return cur.rowcount == 1
+
+
+async def list_active_live_account_leases() -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM live_account_lease WHERE expires_at > ? ORDER BY acquired_at ASC",
+        (utc_now_iso(),),
+    )
+    return _rows_to_list(await cur.fetchall())
+
+
+async def arm_live_actions(
+    account_id: str,
+    task_types: list[str],
+    ttl_seconds: int,
+    created_by: str | None = None,
+) -> dict:
+    """Create a scoped, expiring live-action arm for one account."""
+    _require_live_arm_auth_enabled()
+    if ttl_seconds <= 0:
+        raise ValueError("ttl_seconds must be positive")
+    if ttl_seconds > 900:
+        raise ValueError("ttl_seconds must be <= 900")
+    normalized_task_types = sorted({str(task_type).upper() for task_type in task_types if task_type})
+    if not normalized_task_types:
+        raise ValueError("task_types must not be empty")
+    invalid_task_types = [
+        task_type for task_type in normalized_task_types
+        if task_type not in MUTATING_TASK_TYPES
+    ]
+    if invalid_task_types:
+        raise ValueError(f"Invalid live arm task_types: {', '.join(invalid_task_types)}")
+
+    db = await get_db()
+    arm_id = _new_id()
+    now = utc_now_iso()
+    expires_at = (utc_now() + timedelta(seconds=ttl_seconds)).replace(microsecond=0).isoformat()
+    await db.execute(
+        "INSERT INTO live_arm (id, account_id, task_types, expires_at, created_by, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (arm_id, account_id, json.dumps(normalized_task_types), expires_at, created_by, now),
+    )
+    await db.commit()
+    arm = await get_live_arm(arm_id)
+    await log_activity(account_id, "ARM_LIVE_ACTIONS", f"Armed live actions for {', '.join(normalized_task_types)} until {expires_at}")
+    return arm
+
+
+async def get_live_arm(arm_id: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM live_arm WHERE id = ?", (arm_id,))
+    return _deserialize_live_arm(_row_to_dict(await cur.fetchone()))
+
+
+async def find_active_live_arm(account_id: str, task_type: str) -> dict | None:
+    db = await get_db()
+    now = utc_now_iso()
+    cur = await db.execute(
+        "SELECT * FROM live_arm WHERE account_id = ? AND revoked_at IS NULL "
+        "AND expires_at > ? ORDER BY expires_at DESC",
+        (account_id, now),
+    )
+    normalized_task_type = task_type.upper()
+    for row in await cur.fetchall():
+        arm = _deserialize_live_arm(dict(row))
+        if normalized_task_type in arm.get("task_types", []):
+            return arm
+    return None
+
+
+async def get_active_live_arm(arm_id: str | None, account_id: str | None, task_type: str) -> dict | None:
+    """Return a specific active arm only when it matches account and task type."""
+    if not arm_id or not account_id:
+        return None
+    arm = await get_live_arm(arm_id)
+    if not arm or arm.get("revoked_at") or arm.get("account_id") != account_id:
+        return None
+    if task_type.upper() not in arm.get("task_types", []):
+        return None
+    if str(arm.get("expires_at") or "") <= utc_now_iso():
+        return None
+    return arm
+
+
+async def list_active_live_arms() -> list[dict]:
+    db = await get_db()
+    now = utc_now_iso()
+    cur = await db.execute(
+        "SELECT * FROM live_arm WHERE revoked_at IS NULL AND expires_at > ? "
+        "ORDER BY expires_at DESC",
+        (now,),
+    )
+    return [_deserialize_live_arm(dict(row)) for row in await cur.fetchall()]
+
+
+async def revoke_live_arm(arm_id: str) -> dict | None:
+    db = await get_db()
+    now = utc_now_iso()
+    cur = await db.execute(
+        "UPDATE live_arm SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        (now, arm_id),
+    )
+    await db.commit()
+    if cur.rowcount != 1:
+        return None
+    return await get_live_arm(arm_id)
+
+
+def _deserialize_live_arm(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    task_types = row.get("task_types")
+    if isinstance(task_types, str):
+        try:
+            row["task_types"] = json.loads(task_types)
+        except (json.JSONDecodeError, TypeError):
+            row["task_types"] = []
+    return row
+
+
 async def get_task_stats(account_id: str = None) -> dict:
     """Get aggregated task counts by status."""
     db = await get_db()
@@ -568,6 +802,43 @@ async def get_task_stats(account_id: str = None) -> dict:
         cur = await db.execute("SELECT status, COUNT(*) as cnt FROM task GROUP BY status")
     rows = await cur.fetchall()
     return {row["status"]: row["cnt"] for row in rows}
+
+
+async def get_account_queue_summary(account_id: str) -> dict:
+    """Return queue depth, quota usage, and simple blocked reasons for one account."""
+    account = await get_account(account_id)
+    if not account:
+        return {"account_id": account_id, "queue": {}, "quota": {}, "blocked_reasons": ["account_not_found"]}
+
+    queue = await get_task_stats(account_id=account_id)
+    counters_are_stale = account.get("daily_reset_at") != date.today().isoformat()
+    quota = {
+        "daily_posts": {"used": _effective_daily_counter(account, "daily_posts", counters_are_stale), "limit": config.RATE_LIMIT_POSTS_PER_DAY},
+        "daily_messages": {"used": _effective_daily_counter(account, "daily_messages", counters_are_stale), "limit": config.RATE_LIMIT_MESSAGES_PER_DAY},
+        "daily_likes": {"used": _effective_daily_counter(account, "daily_likes", counters_are_stale), "limit": config.RATE_LIMIT_LIKES_PER_DAY},
+        "daily_comments": {"used": _effective_daily_counter(account, "daily_comments", counters_are_stale), "limit": config.RATE_LIMIT_COMMENTS_PER_DAY},
+        "daily_friends": {"used": _effective_daily_counter(account, "daily_friends", counters_are_stale), "limit": config.RATE_LIMIT_FRIEND_REQUESTS_PER_DAY},
+    }
+    blocked_reasons = []
+    if account.get("status") != "ACTIVE":
+        blocked_reasons.append(f"account_status:{account.get('status')}")
+    for counter, values in quota.items():
+        if values["used"] >= values["limit"]:
+            blocked_reasons.append(f"quota_exhausted:{counter}")
+
+    return {
+        "account_id": account_id,
+        "fb_uid": account.get("fb_uid"),
+        "queue": queue,
+        "quota": quota,
+        "blocked_reasons": blocked_reasons,
+    }
+
+
+def _effective_daily_counter(account: dict, field: str, counters_are_stale: bool) -> int:
+    if counters_are_stale:
+        return 0
+    return int(account.get(field) or 0)
 
 
 async def delete_task(task_id: str) -> bool:

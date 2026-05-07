@@ -89,7 +89,13 @@ export interface SpyAd {
 export interface ExtensionSession {
   fb_uid: string | null
   logged_in: boolean
+  extension_live_actions_enabled?: boolean | null
+  profile_id?: string | null
+  profile_name?: string | null
   uptime_s: number
+  last_seen_age_s?: number
+  stale?: boolean
+  health?: 'online' | 'stale'
 }
 
 export interface AgentStatus {
@@ -104,6 +110,10 @@ export interface AgentStatus {
     live_actions_enabled: boolean
     dry_run_default: boolean
     approval_required: boolean
+    api_auth_enabled?: boolean
+    ws_auth_enabled?: boolean
+    live_auth_ready?: boolean
+    active_live_arms?: unknown[]
   }
 }
 

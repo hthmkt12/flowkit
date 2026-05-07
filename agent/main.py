@@ -210,9 +210,16 @@ async def get_status(_: None = Depends(require_api_key)):
     session = get_session_manager()
     from agent.db import crud
     task_stats = await crud.get_task_stats()
+    active_live_arms = await crud.list_active_live_arms()
+    active_live_leases = await crud.list_active_live_account_leases()
     return {
         "extension": client.ws_stats,
-        "worker": {"active_tasks": worker.active_count},
+        "worker": {
+            "active_tasks": worker.active_count,
+            "node_id": worker.node_id,
+            "active_live_account_ids": sorted(worker.active_live_account_ids),
+            "live_account_leases": active_live_leases,
+        },
         "scheduler": scheduler.stats,
         "seeder": seeder.stats,
         "spy_ads": spy.stats,
@@ -222,6 +229,10 @@ async def get_status(_: None = Depends(require_api_key)):
             "live_actions_enabled": config.LIVE_ACTIONS_ENABLED,
             "dry_run_default": config.DRY_RUN_DEFAULT,
             "approval_required": config.APPROVAL_REQUIRED,
+            "api_auth_enabled": config.API_AUTH_ENABLED,
+            "ws_auth_enabled": config.WS_AUTH_ENABLED,
+            "live_auth_ready": config.API_AUTH_ENABLED and config.WS_AUTH_ENABLED,
+            "active_live_arms": active_live_arms,
         },
         "tasks": task_stats,
     }

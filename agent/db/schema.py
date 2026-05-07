@@ -141,6 +141,31 @@ CREATE TABLE IF NOT EXISTS activity_log (
 CREATE INDEX IF NOT EXISTS idx_activity_account ON activity_log(account_id);
 CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(created_at);
 
+-- ─── Live Arm (explicit scoped live-action window) ──────────
+CREATE TABLE IF NOT EXISTS live_arm (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    task_types      TEXT NOT NULL,
+    expires_at      DATETIME NOT NULL,
+    created_by      TEXT,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    revoked_at      DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_live_arm_account ON live_arm(account_id);
+CREATE INDEX IF NOT EXISTS idx_live_arm_expires ON live_arm(expires_at);
+
+-- ─── Live Account Lease (cross-worker live exclusion) ───────
+CREATE TABLE IF NOT EXISTS live_account_lease (
+    account_id      TEXT PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
+    task_id         TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+    node_id         TEXT NOT NULL,
+    acquired_at     DATETIME NOT NULL,
+    heartbeat_at    DATETIME NOT NULL,
+    expires_at      DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_live_account_lease_expires ON live_account_lease(expires_at);
+CREATE INDEX IF NOT EXISTS idx_live_account_lease_node ON live_account_lease(node_id);
+
 -- ─── Spy Ad (competitor ad monitoring) ──────────────────────
 CREATE TABLE IF NOT EXISTS spy_ad (
     id              TEXT PRIMARY KEY,
@@ -252,6 +277,12 @@ _MIGRATIONS = [
     "ALTER TABLE account ADD COLUMN session_data TEXT",
     "CREATE INDEX IF NOT EXISTS idx_task_status_scheduled_priority ON task(status, scheduled_at, priority DESC)",
     "CREATE INDEX IF NOT EXISTS idx_task_account_status ON task(account_id, status)",
+    "CREATE TABLE IF NOT EXISTS live_arm (id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE, task_types TEXT NOT NULL, expires_at DATETIME NOT NULL, created_by TEXT, created_at DATETIME DEFAULT (datetime('now')), revoked_at DATETIME)",
+    "CREATE INDEX IF NOT EXISTS idx_live_arm_account ON live_arm(account_id)",
+    "CREATE INDEX IF NOT EXISTS idx_live_arm_expires ON live_arm(expires_at)",
+    "CREATE TABLE IF NOT EXISTS live_account_lease (account_id TEXT PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE, task_id TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE, node_id TEXT NOT NULL, acquired_at DATETIME NOT NULL, heartbeat_at DATETIME NOT NULL, expires_at DATETIME NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_live_account_lease_expires ON live_account_lease(expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_live_account_lease_node ON live_account_lease(node_id)",
 ]
 
 

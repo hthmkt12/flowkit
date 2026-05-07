@@ -1,11 +1,20 @@
 """FBKit — Configuration."""
 import os
+import socket
 
 
 def _is_truthy(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _clamped_int(value: str | None, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value) if value is not None else default
+    except ValueError:
+        parsed = default
+    return max(minimum, min(maximum, parsed))
 
 
 # ─── Server ──────────────────────────────────────────────────
@@ -31,6 +40,13 @@ MEDIA_DIR = os.environ.get("MEDIA_DIR", "media")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "1"))  # Sequential by default
+FBKIT_NODE_ID = os.environ.get("FBKIT_NODE_ID") or f"{socket.gethostname()}:{os.getpid()}"
+LIVE_ACCOUNT_LEASE_TTL_SECONDS = _clamped_int(
+    os.environ.get("LIVE_ACCOUNT_LEASE_TTL_SECONDS"),
+    default=900,
+    minimum=60,
+    maximum=3600,
+)
 
 # ─── Safety Gate ──────────────────────────────────────────────
 # Defaults protect personal accounts from accidental live mutations.

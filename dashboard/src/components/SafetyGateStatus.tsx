@@ -31,8 +31,9 @@ export default function SafetyGateStatus({ status }: SafetyGateStatusProps) {
   const liveEnabled = safety?.live_actions_enabled ?? false
   const dryRunDefault = safety?.dry_run_default ?? true
   const approvalRequired = safety?.approval_required ?? true
-  const connected = extension?.connected ?? false
-  const loggedInSessions = extension?.sessions?.filter(session => session.logged_in && session.fb_uid).length ?? 0
+  const freshSessions = extension?.sessions?.filter(session => !session.stale).length ?? 0
+  const connected = freshSessions > 0
+  const loggedInSessions = extension?.sessions?.filter(session => session.logged_in && session.fb_uid && !session.stale).length ?? 0
   const protectedMode = !liveEnabled && dryRunDefault && approvalRequired
 
   if (!safetyKnown) {
