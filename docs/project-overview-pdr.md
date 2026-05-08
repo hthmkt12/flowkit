@@ -1,6 +1,6 @@
 # FBKit Project Overview and PDR
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
 ## Overview
 
@@ -20,6 +20,24 @@ Primary product constraint: FBKit is dry-run first. Real Facebook mutations must
 | Scheduling | Scheduled posts/messages become queued tasks | `agent/services/scheduler.py` |
 | Browser bridge | Route commands to connected Chrome extension sessions by `fb_uid` | `agent/services/fb_client.py`, `extension/` |
 | Dashboard | Local UI for status, accounts, tasks, seeding, spy ads, logs | `dashboard/src/App.tsx` |
+
+## Marketing Context
+
+| Item | Current direction |
+|---|---|
+| Product name | FBKit |
+| Tagline | local-first Facebook automation assistant |
+| Category | Facebook automation software |
+| Main offer | Local automation platform with safety-gated execution |
+| Objective | Lead generation |
+| Primary audience | Agencies and marketers |
+| Buyer profile | Small agencies and SMB teams |
+| Decision-maker | Founder or agency owner |
+| Geographic focus | Global, remote-first |
+| Positioning | Safer local-first alternative to cloud social automation tools |
+| Public website | Not published yet |
+| Pricing | TBD / not public yet |
+| Brand assets | Basic assets only; style follows existing app UI |
 
 ## Functional Requirements
 
