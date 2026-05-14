@@ -1,17 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, Users, CheckCircle, XCircle, Clock, Zap, Eye, Wifi } from 'lucide-react'
+import { Activity, BarChart3, CheckCircle, Clock, Radio, ShieldCheck, Users, Wifi, WifiOff, XCircle } from 'lucide-react'
 import { fetchAPI } from '../api/client'
 import { useWebSocket } from '../api/useWebSocket'
 import SafetyGateStatus from '../components/SafetyGateStatus'
-import type { TaskStats, Account, AgentStatus, WSEvent } from '../types'
-
-interface StatCard {
-  label: string
-  value: number | string
-  icon: React.ReactNode
-  color: string
-  sub?: string
-}
+import type { AgentStatus, DashboardPerformance, DashboardSummary, WSEvent } from '../types'
 
 interface LiveEvent {
   id: number
@@ -21,243 +13,256 @@ interface LiveEvent {
   color: string
 }
 
-let _evId = 0
+let eventId = 0
 
 function eventLabel(ev: WSEvent): { text: string; color: string } {
-  const d = ev.data as Record<string, string>
+  const rawData = ev.data
+  const data = rawData && typeof rawData === 'object' && !Array.isArray(rawData) ? rawData as Record<string, unknown> : {}
+  const taskType = typeof data.type === 'string' ? data.type : ''
+  const error = typeof data.error === 'string' ? data.error : 'không rõ lỗi'
   switch (ev.type) {
     case 'task_started':
-      return { text: `▶ Task ${d.type} started`, color: 'var(--blue)' }
+      return { text: `Đang xử lý task ${taskType}`, color: 'var(--blue)' }
     case 'task_completed':
-      return { text: `✓ Task ${d.type} completed`, color: 'var(--green)' }
+      return { text: `Hoàn tất task ${taskType}`, color: 'var(--green)' }
     case 'task_failed':
-      return { text: `✗ Task failed: ${d.error?.slice(0, 60)}`, color: 'var(--red)' }
-    case 'seed_action':
-      return { text: `🌱 Seeding: ${d.action} on ${d.target}`, color: 'var(--accent)' }
-    case 'spy_new_ad':
-      return { text: `👁 New ad found: ${d.page} — ${d.text?.slice(0, 50)}`, color: 'var(--yellow)' }
-    case 'spy_check':
-      return { text: `🔍 Spy check: ${d.target}`, color: 'var(--muted)' }
-    case 'worker_break':
-      return { text: `☕ Worker break (${d.duration_s}s)`, color: 'var(--muted)' }
+      return { text: `Task thất bại: ${error.slice(0, 60)}`, color: 'var(--red)' }
+    case 'job.started':
+      return { text: 'Chiến dịch đăng bài đã bắt đầu', color: 'var(--blue)' }
+    case 'job.completed':
+      return { text: 'Chiến dịch đăng bài đã hoàn tất', color: 'var(--green)' }
     default:
-      return { text: `${ev.type}`, color: 'var(--muted)' }
+      return { text: ev.type, color: 'var(--muted)' }
   }
 }
 
+function statusLabel(value?: string) {
+  if (value === 'ready') return { text: 'SẴN SÀNG', color: 'var(--green)' }
+  if (value === 'not_synced') return { text: 'CHƯA ĐỒNG BỘ', color: 'var(--yellow)' }
+  if (value === 'offline') return { text: 'OFFLINE', color: 'var(--red)' }
+  return { text: 'CHƯA CẤU HÌNH', color: 'var(--muted)' }
+}
+
+function percentBar(value: number, color = 'var(--green)') {
+  return (
+    <div style={{ height: '7px', background: 'var(--border)', borderRadius: '999px', overflow: 'hidden' }}>
+      <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, value))}%`, background: color, borderRadius: '999px' }} />
+    </div>
+  )
+}
+
 export default function DashboardPage() {
-  const [taskStats, setTaskStats] = useState<TaskStats>({})
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [seederStats, setSeederStats] = useState<{ campaigns: number; active: number }>({ campaigns: 0, active: 0 })
-  const [spyStats, setSpyStats] = useState<{ targets: number; total_ads_found: number }>({ targets: 0, total_ads_found: 0 })
+  const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  const [performance, setPerformance] = useState<DashboardPerformance | null>(null)
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [events, setEvents] = useState<LiveEvent[]>([])
   const { isConnected, lastEvent } = useWebSocket()
 
   const load = useCallback(async () => {
-    try {
-      const [status, stats, accs, seed, spy] = await Promise.allSettled([
-        fetchAPI<AgentStatus>('/api/status'),
-        fetchAPI<TaskStats>('/api/tasks/stats'),
-        fetchAPI<Account[]>('/api/accounts'),
-        fetchAPI<{ campaigns: number; active: number; running: boolean }>('/api/seeding/campaigns/stats'),
-        fetchAPI<{ targets: number; total_ads_found: number; running: boolean }>('/api/spy/targets/stats'),
-      ])
-      if (status.status === 'fulfilled') setAgentStatus(status.value)
-      else setAgentStatus(null)
-      if (stats.status === 'fulfilled') setTaskStats(stats.value)
-      if (accs.status === 'fulfilled') setAccounts(accs.value)
-      if (seed.status === 'fulfilled') setSeederStats(seed.value)
-      if (spy.status === 'fulfilled') setSpyStats(spy.value)
-    } catch {}
+    const [status, dashboardSummary, dashboardPerformance] = await Promise.allSettled([
+      fetchAPI<AgentStatus>('/api/status'),
+      fetchAPI<DashboardSummary>('/api/dashboard/summary'),
+      fetchAPI<DashboardPerformance>('/api/dashboard/performance?range=7d&limit=30'),
+    ])
+
+    setAgentStatus(status.status === 'fulfilled' ? status.value : null)
+    setSummary(dashboardSummary.status === 'fulfilled' ? dashboardSummary.value : null)
+    setPerformance(dashboardPerformance.status === 'fulfilled' ? dashboardPerformance.value : null)
+    setLoadError(dashboardSummary.status === 'rejected' || dashboardPerformance.status === 'rejected' ? 'Không tải được dữ liệu ZooPost cloud.' : null)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // Refresh stats every 15s
   useEffect(() => {
-    const t = setInterval(load, 15_000)
-    return () => clearInterval(t)
+    const timer = setInterval(load, 15_000)
+    return () => clearInterval(timer)
   }, [load])
 
-  // Add live event to feed
   useEffect(() => {
     if (!lastEvent) return
     const { text, color } = eventLabel(lastEvent)
-    const now = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    setEvents(prev => [{ id: ++_evId, type: lastEvent.type, text, time: now, color }, ...prev.slice(0, 49)])
+    const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setEvents(prev => [{ id: ++eventId, type: lastEvent.type, text, time, color }, ...prev.slice(0, 49)])
   }, [lastEvent])
 
-  const activeAccounts = accounts.filter(a => a.status === 'ACTIVE').length
-  const totalTasks = Object.values(taskStats).reduce((a, b) => a + b, 0)
-
-  const cards: StatCard[] = [
-    {
-      label: 'Tasks Total',
-      value: totalTasks,
-      icon: <Activity size={18} />,
-      color: 'var(--accent)',
-      sub: `${taskStats.PENDING ?? 0} pending · ${taskStats.PROCESSING ?? 0} running`,
-    },
-    {
-      label: 'Completed',
-      value: taskStats.COMPLETED ?? 0,
-      icon: <CheckCircle size={18} />,
-      color: 'var(--green)',
-      sub: `${taskStats.FAILED ?? 0} failed`,
-    },
-    {
-      label: 'Accounts',
-      value: accounts.length,
-      icon: <Users size={18} />,
-      color: 'var(--blue)',
-      sub: `${activeAccounts} active`,
-    },
-    {
-      label: 'Seeding',
-      value: seederStats.active,
-      icon: <Zap size={18} />,
-      color: 'var(--yellow)',
-      sub: `${seederStats.campaigns} total campaigns`,
-    },
-    {
-      label: 'Spy Targets',
-      value: spyStats.targets,
-      icon: <Eye size={18} />,
-      color: 'var(--purple)',
-      sub: `${spyStats.total_ads_found} ads found`,
-    },
-    {
-      label: 'Pending Queue',
-      value: taskStats.PENDING ?? 0,
-      icon: <Clock size={18} />,
-      color: 'var(--muted)',
-      sub: `${taskStats.CANCELLED ?? 0} cancelled`,
-    },
+  const kpis = summary?.kpis ?? { scheduled_posts: 0, published_posts: 0, total_channels: 0, total_reach: 0 }
+  const statusBar = summary?.status_bar ?? { buffer_api: 'not_configured', imgbb_api: 'not_configured', pancake: 'not_synced' }
+  const cards = [
+    { label: 'Bài viết đã đặt lịch', value: kpis.scheduled_posts, icon: <Clock size={18} />, color: 'var(--blue)', sub: '+0% so với tuần trước' },
+    { label: 'Bài viết đã Public', value: kpis.published_posts, icon: <CheckCircle size={18} />, color: 'var(--green)', sub: '+0% so với tuần trước' },
+    { label: 'Tổng kênh', value: kpis.total_channels, icon: <Users size={18} />, color: 'var(--purple)', sub: 'Fanpage/Profile/Nhóm' },
+    { label: 'Tổng Reach', value: kpis.total_reach, icon: <Activity size={18} />, color: 'var(--yellow)', sub: 'Chỉ tính dữ liệu thật' },
   ]
 
+  const maxChartValue = Math.max(1, ...(performance?.line_chart ?? []).map(row => Math.max(row.scheduled, row.published, row.failed)))
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Status bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--muted)' }}>
-        <Wifi size={13} color={isConnected ? 'var(--green)' : 'var(--red)'} />
-        <span style={{ color: isConnected ? 'var(--green)' : 'var(--red)' }}>
-          {isConnected ? 'Live' : 'Disconnected'}
-        </span>
-        <span>·</span>
-        <span>FBKit Agent Dashboard</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text)' }}>Dashboard Tổng Quan</div>
+          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Theo dõi lịch đăng, trạng thái bài viết và hiệu suất kênh từ ZooPost cloud.</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: isConnected ? 'var(--green)' : 'var(--red)' }}>
+          {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
+          {isConnected ? 'Realtime connected' : 'Realtime offline'}
+        </div>
       </div>
+
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', padding: '10px 12px' }}>
+        {[
+          ['BUFFER API', statusBar.buffer_api],
+          ['IMGBB API', statusBar.imgbb_api],
+          ['PANCAKE', statusBar.pancake],
+        ].map(([label, value]) => {
+          const status = statusLabel(value)
+          return (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 700, color: status.color }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: status.color }} />
+              {label}: {status.text}
+            </div>
+          )
+        })}
+      </div>
+
+      {loadError && (
+        <div style={{ border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.08)', color: 'var(--yellow)', borderRadius: '12px', padding: '12px', fontSize: '12px' }}>
+          {loadError} Hiển thị trạng thái an toàn thay vì dữ liệu giả.
+        </div>
+      )}
 
       <SafetyGateStatus status={agentStatus} />
 
-      {/* Stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px' }}>
         {cards.map(card => (
-          <div key={card.label} style={{
-            background: 'var(--card)',
-            border: '1px solid var(--border)',
-            borderRadius: '10px',
-            padding: '16px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: card.color }}>
+          <div key={card.label} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '9px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: card.color }}>
               {card.icon}
-              <span style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted)' }}>
-                {card.label}
-              </span>
+              <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{card.sub}</span>
             </div>
-            <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>
-              {card.value}
-            </div>
-            {card.sub && (
-              <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{card.sub}</div>
-            )}
+            <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 700 }}>{card.label}</div>
+            <div style={{ fontSize: '30px', color: 'var(--text)', fontWeight: 850, lineHeight: 1 }}>{card.value}</div>
           </div>
         ))}
       </div>
 
-      {/* Bottom grid: task breakdown + live feed */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', minHeight: '300px' }}>
-        {/* Task breakdown */}
-        <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Task Breakdown
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(280px, 0.8fr)', gap: '12px' }}>
+        <section style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 800 }}>Biểu đồ hiệu suất</div>
+            <div style={{ fontSize: '11px', color: 'var(--muted)' }}>7 ngày</div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {[
-              { label: 'Completed', key: 'COMPLETED', color: 'var(--green)' },
-              { label: 'Failed', key: 'FAILED', color: 'var(--red)' },
-              { label: 'Pending', key: 'PENDING', color: 'var(--yellow)' },
-              { label: 'Processing', key: 'PROCESSING', color: 'var(--accent)' },
-              { label: 'Cancelled', key: 'CANCELLED', color: 'var(--muted)' },
-            ].map(row => {
-              const v = (taskStats as Record<string, number>)[row.key] ?? 0
-              const pct = totalTasks > 0 ? Math.round((v / totalTasks) * 100) : 0
-              return (
-                <div key={row.key}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
-                    <span style={{ color: 'var(--text)' }}>{row.label}</span>
-                    <span style={{ color: row.color, fontWeight: 600 }}>{v} ({pct}%)</span>
-                  </div>
-                  <div style={{ height: '4px', background: 'var(--border)', borderRadius: '2px', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${pct}%`, background: row.color, borderRadius: '2px', transition: 'width 0.5s ease' }} />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Live event feed */}
-        <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: isConnected ? 'var(--green)' : 'var(--red)', animation: isConnected ? 'pulse 2s infinite' : 'none' }} />
-            Live Feed
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11px' }}>
-            {events.length === 0 ? (
-              <div style={{ color: 'var(--muted)', margin: 'auto' }}>Waiting for events…</div>
-            ) : events.map(ev => (
-              <div key={ev.id} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                <span style={{ color: 'var(--muted)', flexShrink: 0, fontFamily: 'monospace' }}>{ev.time}</span>
-                <span style={{ color: ev.color, wordBreak: 'break-word' }}>{ev.text}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${performance?.line_chart.length || 7}, minmax(30px, 1fr))`, alignItems: 'end', gap: '8px', minHeight: '190px' }}>
+            {(performance?.line_chart ?? []).map(row => (
+              <div key={row.date} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'stretch' }}>
+                <div style={{ height: `${Math.max(4, row.scheduled / maxChartValue * 150)}px`, background: 'var(--blue)', borderRadius: '6px 6px 2px 2px' }} />
+                <div style={{ height: `${Math.max(4, row.published / maxChartValue * 150)}px`, background: 'var(--green)', borderRadius: '6px 6px 2px 2px' }} />
+                <div style={{ height: `${Math.max(4, row.failed / maxChartValue * 150)}px`, background: 'var(--yellow)', borderRadius: '6px 6px 2px 2px' }} />
+                <div style={{ fontSize: '10px', color: 'var(--muted)', textAlign: 'center' }}>{row.date.slice(5)}</div>
               </div>
             ))}
           </div>
-        </div>
+        </section>
+
+        <section style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 800, marginBottom: '14px' }}>Tỷ lệ trạng thái bài viết</div>
+          <div style={{ display: 'grid', placeItems: 'center', width: '130px', height: '130px', borderRadius: '50%', margin: '0 auto 16px', background: 'conic-gradient(var(--green) 0 55%, var(--yellow) 55% 75%, var(--border) 75% 100%)' }}>
+            <div style={{ display: 'grid', placeItems: 'center', width: '88px', height: '88px', borderRadius: '50%', background: 'var(--card)' }}>
+              <div style={{ fontSize: '26px', fontWeight: 850 }}>{performance?.status_donut.total ?? 0}</div>
+              <div style={{ fontSize: '10px', color: 'var(--muted)' }}>Tổng</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {(performance?.status_donut.segments ?? []).map(segment => (
+              <div key={segment.status} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                <span style={{ color: 'var(--muted)' }}>{segment.status}</span>
+                <span style={{ fontWeight: 800 }}>{segment.count} ({segment.percent}%)</span>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
 
-      {/* Accounts quick view */}
-      {accounts.length > 0 && (
-        <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Accounts ({accounts.length})
+      <section style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 800, marginBottom: '12px' }}>
+          <BarChart3 size={16} /> Hiệu suất theo kênh
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <thead style={{ color: 'var(--muted)', textAlign: 'left' }}>
+              <tr>
+                {['Kênh', 'Nền tảng', 'Đặt lịch', 'Public', 'Reach', 'Engagement', 'Tỷ lệ thành công'].map(head => <th key={head} style={{ padding: '9px 8px', borderBottom: '1px solid var(--border)' }}>{head}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {(performance?.channel_performance ?? []).map(channel => (
+                <tr key={channel.id}>
+                  <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ fontWeight: 800 }}>{channel.display_name}</div>
+                    <div style={{ fontSize: '10px', color: 'var(--muted)' }}>{channel.safe_display_id ?? 'ẩn định danh'}</div>
+                  </td>
+                  <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)' }}>{channel.platform} / {channel.channel_type}</td>
+                  <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)' }}>{channel.scheduled}</td>
+                  <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)' }}>{channel.published}</td>
+                  <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)' }}>{channel.reach}</td>
+                  <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)' }}>{channel.engagement}</td>
+                  <td style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)', minWidth: '140px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ minWidth: '34px', fontWeight: 800 }}>{channel.success_rate}%</span>
+                      <div style={{ flex: 1 }}>{percentBar(channel.success_rate)}</div>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(performance?.channel_performance.length ?? 0) === 0 && <div style={{ color: 'var(--muted)', padding: '18px 0', textAlign: 'center' }}>Chưa có kênh nào.</div>}
+        </div>
+      </section>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+        <BottomPanel title="Bài viết sắp tới" rows={(performance?.upcoming_posts ?? []).map(item => ({ id: item.target_id, title: item.channel_name, meta: `${item.status} · ${item.content_preview}` }))} />
+        <BottomPanel title="Top performance content" rows={(performance?.top_content ?? []).map(item => ({ id: item.job_id, title: item.title ?? item.content_id, meta: item.body_preview }))} />
+        <section style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 800, marginBottom: '12px' }}>
+            <Radio size={15} /> Activity log gần đây
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px' }}>
-            {accounts.slice(0, 12).map(acc => (
-              <div key={acc.id} style={{
-                display: 'flex', alignItems: 'center', gap: '8px',
-                padding: '8px 10px', borderRadius: '8px', background: 'var(--surface)',
-                border: '1px solid var(--border)',
-              }}>
-                <span style={{
-                  width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0,
-                  background: acc.status === 'ACTIVE' ? 'var(--green)' : acc.status === 'BANNED' ? 'var(--red)' : 'var(--muted)',
-                }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{acc.name}</div>
-                  <div style={{ fontSize: '10px', color: 'var(--muted)' }}>
-                    👍{acc.daily_likes} 💬{acc.daily_comments} 📝{acc.daily_posts}
-                  </div>
-                </div>
-                <XCircle size={12} color={acc.cookies_valid ? 'var(--green)' : 'var(--red)'} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '11px' }}>
+            {events.map(event => (
+              <div key={event.id} style={{ display: 'flex', gap: '8px' }}>
+                <span style={{ color: 'var(--muted)' }}>{event.time}</span>
+                <span style={{ color: event.color }}>{event.text}</span>
               </div>
             ))}
+            {events.length === 0 && (performance?.activity_log ?? []).map(event => (
+              <div key={event.id} style={{ color: 'var(--muted)' }}>{event.type}: {event.message}</div>
+            ))}
+            {events.length === 0 && (performance?.activity_log.length ?? 0) === 0 && <div style={{ color: 'var(--muted)' }}>Chưa có hoạt động.</div>}
           </div>
-        </div>
-      )}
+        </section>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--muted)', fontSize: '11px' }}>
+        <ShieldCheck size={14} /> ZooPost cloud chỉ hiển thị dữ liệu thật; thao tác live vẫn bị chặn bởi FBKit Safety Gate.
+        {loadError && <XCircle size={14} color="var(--yellow)" />}
+      </div>
     </div>
+  )
+}
+
+function BottomPanel({ title, rows }: { title: string; rows: { id: string; title: string | null; meta: string }[] }) {
+  return (
+    <section style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 800, marginBottom: '12px' }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {rows.length === 0 ? <div style={{ color: 'var(--muted)', fontSize: '12px' }}>Chưa có dữ liệu.</div> : rows.slice(0, 5).map(row => (
+          <div key={row.id} style={{ borderBottom: '1px solid var(--border)', paddingBottom: '9px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 800 }}>{row.title || 'Không có tiêu đề'}</div>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.meta}</div>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }

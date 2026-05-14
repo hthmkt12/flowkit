@@ -123,3 +123,81 @@ export interface WSEvent {
   data: Record<string, unknown>
   timestamp: string
 }
+
+export type DashboardConnectorStatus = 'ready' | 'not_configured' | 'not_synced' | 'offline'
+
+export interface DashboardSummary {
+  kpis: {
+    scheduled_posts: number
+    published_posts: number
+    total_channels: number
+    total_reach: number
+  }
+  status_bar: {
+    buffer_api: DashboardConnectorStatus
+    imgbb_api: DashboardConnectorStatus
+    pancake: DashboardConnectorStatus
+  }
+  scheduled_jobs?: number
+  scheduled_targets?: number
+  published_targets?: number
+  failed_targets?: number
+  total_channels?: number
+  total_reach?: number
+}
+
+export interface DashboardPerformance {
+  range: '7d' | '30d'
+  line_chart: Array<{
+    date: string
+    scheduled: number
+    published: number
+    failed: number
+  }>
+  status_donut: {
+    total: number
+    segments: Array<{
+      status: string
+      count: number
+      percent: number
+    }>
+  }
+  channel_performance: Array<{
+    id: string
+    platform: string
+    channel_type: string
+    display_name: string
+    username: string | null
+    safe_display_id: string | null
+    connection_status: string
+    scheduled: number
+    published: number
+    reach: number
+    engagement: number
+    success_rate: number
+  }>
+  upcoming_posts: Array<{
+    job_id: string
+    target_id: string
+    channel_id: string
+    channel_name: string
+    scheduled_for: string | null
+    status: string
+    content_preview: string
+  }>
+  top_content: Array<{
+    job_id: string
+    content_id: string
+    title: string | null
+    body_preview: string
+    reach: number
+    engagement: number
+  }>
+  activity_log: Array<{
+    id: string
+    type: string
+    severity: string
+    message: string
+    target_id: string | null
+  }>
+}
