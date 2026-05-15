@@ -110,7 +110,7 @@ Required guardrails:
 
 - `FBKIT_NODE_ID` must be unique per worker process when multiple workers share one DB.
 - `LIVE_ACCOUNT_LEASE_TTL_SECONDS` must exceed expected live task duration.
-- Live account lease heartbeat refresh is not implemented; keep live workflows within the lease TTL or add heartbeat refresh first.
+- `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` should be shorter than the lease TTL; the worker clamps the effective heartbeat interval to at most half of `LIVE_ACCOUNT_LEASE_TTL_SECONDS`.
 - `/api/status` exposes operational metadata: node IDs, account IDs, session metadata, live arms, and live account leases.
 - Keep the API bound to localhost or enable `API_AUTH_ENABLED=true` before non-local exposure.
 

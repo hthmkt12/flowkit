@@ -47,6 +47,12 @@ LIVE_ACCOUNT_LEASE_TTL_SECONDS = _clamped_int(
     minimum=60,
     maximum=3600,
 )
+LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS = _clamped_int(
+    os.environ.get("LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS"),
+    default=60,
+    minimum=5,
+    maximum=300,
+)
 
 # ─── Safety Gate ──────────────────────────────────────────────
 # Defaults protect personal accounts from accidental live mutations.

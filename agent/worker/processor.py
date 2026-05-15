@@ -111,8 +111,17 @@ def _bulk_recipients_from_payload(payload: dict) -> list[dict]:
 class WorkerController:
     """Controls the background task processor."""
 
-    def __init__(self, node_id: str | None = None):
+    def __init__(self, node_id: str | None = None, live_lease_heartbeat_seconds: float | None = None):
         self.node_id = node_id or config.FBKIT_NODE_ID
+        requested_heartbeat_seconds = (
+            live_lease_heartbeat_seconds
+            if live_lease_heartbeat_seconds is not None
+            else config.LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS
+        )
+        self.live_lease_heartbeat_seconds = min(
+            requested_heartbeat_seconds,
+            max(5, config.LIVE_ACCOUNT_LEASE_TTL_SECONDS / 2),
+        )
         self._shutdown = False
         self._active_count = 0
         self._active_live_account_ids: set[str] = set()
@@ -312,6 +321,31 @@ class WorkerController:
         if account_id:
             self._active_live_account_ids.discard(account_id)
 
+    async def _heartbeat_live_account_lease(self, live_lease: dict):
+        """Refresh a live account lease while a long live task is processing."""
+        try:
+            while True:
+                await asyncio.sleep(self.live_lease_heartbeat_seconds)
+                refreshed = await crud.refresh_live_account_lease(
+                    live_lease["account_id"],
+                    live_lease["task_id"],
+                    live_lease["node_id"],
+                    config.LIVE_ACCOUNT_LEASE_TTL_SECONDS,
+                )
+                if refreshed is None:
+                    logger.warning(
+                        "Live account lease heartbeat stopped for account=%s task=%s node=%s",
+                        live_lease.get("account_id"),
+                        live_lease.get("task_id"),
+                        live_lease.get("node_id"),
+                    )
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Live account lease heartbeat failed: %s", exc)
+            return
+
     async def _process_task(
         self,
         task: dict,
@@ -325,8 +359,11 @@ class WorkerController:
         strategy = None
         strategy_id = None
         strategy_url = "*"
+        lease_heartbeat_task = None
 
         try:
+            if live_lease:
+                lease_heartbeat_task = asyncio.create_task(self._heartbeat_live_account_lease(live_lease))
             session = get_session_manager()
             payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}
             payload = enforce_payload(task_type, payload)
@@ -487,6 +524,14 @@ class WorkerController:
                 asyncio.create_task(notifier.notify_task_failed(task, error_message))
 
         finally:
+            if lease_heartbeat_task:
+                lease_heartbeat_task.cancel()
+                try:
+                    await lease_heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    logger.error("Live account lease heartbeat cleanup observed failure: %s", exc)
             if live_lease:
                 try:
                     await crud.release_live_account_lease(

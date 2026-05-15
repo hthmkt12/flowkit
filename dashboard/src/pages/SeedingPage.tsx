@@ -29,7 +29,9 @@ export default function SeedingPage() {
     try {
       const data = await fetchAPI<SeedCampaign[]>('/api/seeding/campaigns')
       setCampaigns(data)
-    } catch {}
+    } catch (error) {
+      void error
+    }
     finally { setLoading(false) }
   }, [])
 

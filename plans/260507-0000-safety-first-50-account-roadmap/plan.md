@@ -115,11 +115,11 @@ Use this plan as the source of truth. Implement one phase at a time with TDD for
 - Dry-run/read-only tasks remain lease-exempt.
 - Worker keeps process-local `_active_live_account_ids` as telemetry/defense-in-depth; DB lease is now the cross-worker guard.
 - `/api/status` worker block exposes read-only `node_id`, `active_live_account_ids`, and `live_account_leases`.
-- New config: `FBKIT_NODE_ID` optional, default `hostname:pid`; must be unique per worker process when multiple workers share one DB. `LIVE_ACCOUNT_LEASE_TTL_SECONDS` default `900`, clamped `60`-`3600`.
+- New config: `FBKIT_NODE_ID` optional, default `hostname:pid`; must be unique per worker process when multiple workers share one DB. `LIVE_ACCOUNT_LEASE_TTL_SECONDS` default `900`, clamped `60`-`3600`; `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` default `60`, clamped `5`-`300`.
 - No live actions enabled by default. Safety Gate, live arm, API auth, WS auth, exact `fb_uid`, extension guard, and quota checks remain intact.
 - Verification: `pytest tests\unit\test_account_queue_quota.py -q` -> `22 passed in 4.80s`; `pytest tests\unit\test_safety_gate.py tests\unit\test_live_arming.py tests\unit\test_account_queue_quota.py -q` -> `95 passed in 15.93s`; final `pytest tests\unit -q` -> `260 passed in 21.20s`; `python -m compileall agent` passed; `node --check extension\background.js` passed; dashboard `npm run build` passed.
 - Final code review approved docs sync, no blockers.
-- Residual risks: no lease heartbeat refresh; keep live tasks within TTL or prioritize heartbeat before long live workflows. `/api/status` exposes operational IDs/session metadata; keep API local or enable API auth before non-local exposure. Future hardening: multi-process SQLite contention integration test.
+- Live account leases are refreshed during task processing by matching account/task/node before expiry; the worker clamps the effective heartbeat interval to at most half of TTL. Residual risks: `/api/status` exposes operational IDs/session metadata; keep API local or enable API auth before non-local exposure. Future hardening: multi-process SQLite contention integration test.
 
 ## Phase 5 Completion Evidence
 
@@ -133,4 +133,4 @@ Use this plan as the source of truth. Implement one phase at a time with TDD for
 - Is the 50-account target for scheduled/rate-limited operation, or true simultaneous live action?
 - Should live mode be permanently restricted to dedicated test/business assets?
 - What is the maximum acceptable local machine resource budget for the multi-profile pilot?
-- What maximum live task duration should drive lease heartbeat refresh design?
+- What live task duration and heartbeat interval should be used for controlled live pilots?

@@ -24,7 +24,9 @@ export default function TasksPage() {
       const url = filter ? `/api/tasks?status=${filter}` : '/api/tasks'
       const data = await fetchAPI<Task[]>(url)
       setTasks(data)
-    } catch {}
+    } catch (error) {
+      void error
+    }
     finally { setLoading(false) }
   }, [filter])
 

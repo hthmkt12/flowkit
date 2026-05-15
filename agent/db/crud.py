@@ -415,6 +415,17 @@ async def get_task(task_id: str) -> dict | None:
     return _row_to_dict(await cur.fetchone())
 
 
+async def get_task_by_ref_id(ref_id: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM task WHERE ref_id = ?", (ref_id,))
+    return _row_to_dict(await cur.fetchone())
+
+
+async def rollback():
+    db = await get_db()
+    await db.rollback()
+
+
 async def list_tasks(status: str = None, task_type: str = None, account_id: str = None) -> list[dict]:
     db = await get_db()
     conditions, params = [], []
@@ -670,6 +681,33 @@ async def release_live_account_lease(account_id: str, task_id: str, node_id: str
     )
     await db.commit()
     return cur.rowcount == 1
+
+
+async def refresh_live_account_lease(
+    account_id: str,
+    task_id: str,
+    node_id: str,
+    ttl_seconds: int | None = None,
+) -> dict | None:
+    """Extend the lease held by the matching account/task/node tuple."""
+    if not account_id or not task_id or not node_id:
+        return None
+    db = await get_db()
+    now = utc_now_iso()
+    expires_at = _lease_expires_at(ttl_seconds)
+    cur = await db.execute(
+        "UPDATE live_account_lease SET heartbeat_at = ?, expires_at = ? "
+        "WHERE account_id = ? AND task_id = ? AND node_id = ? AND expires_at > ?",
+        (now, expires_at, account_id, task_id, node_id, now),
+    )
+    await db.commit()
+    if cur.rowcount != 1:
+        return None
+    cur = await db.execute(
+        "SELECT * FROM live_account_lease WHERE account_id = ? AND task_id = ? AND node_id = ?",
+        (account_id, task_id, node_id),
+    )
+    return _row_to_dict(await cur.fetchone())
 
 
 async def list_active_live_account_leases() -> list[dict]:

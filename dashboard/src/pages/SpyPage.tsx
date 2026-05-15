@@ -16,7 +16,9 @@ export default function SpyPage() {
     try {
       const data = await fetchAPI<SpyTarget[]>('/api/spy/targets')
       setTargets(data)
-    } catch {}
+    } catch (error) {
+      void error
+    }
     finally { setLoading(false) }
   }, [])
 
@@ -25,7 +27,9 @@ export default function SpyPage() {
     try {
       const data = await fetchAPI<SpyAd[]>(url)
       setAds(data)
-    } catch {}
+    } catch (error) {
+      void error
+    }
   }, [])
 
   useEffect(() => { loadTargets() }, [loadTargets])
