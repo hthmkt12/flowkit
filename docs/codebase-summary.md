@@ -215,6 +215,12 @@ Verified in `agent/config.py`:
 | `LIVE_ACTIONS_ENABLED` | `false` | Global switch for real mutating Facebook actions |
 | `DRY_RUN_DEFAULT` | `true` | Default dry-run value when live actions are allowed and no explicit flag is provided |
 | `APPROVAL_REQUIRED` | `true` | Requires payload approval before live mutation |
+| `ZOOPOST_CLOUD_API_URL` | empty | Enables the ZooPost Cloud gateway loop only when paired with `ZOOPOST_AGENT_CREDENTIAL`; remote URLs must be `https`/`wss`, while loopback `http`/`ws` is allowed for local dev |
+| `ZOOPOST_AGENT_CREDENTIAL` | empty | Env-only ZooPost agent credential sent in `agent_hello`; do not persist in docs, git, browser storage, or cloud logs |
+| `ZOOPOST_AGENT_INSTALLATION_ID` | empty | Optional installation-scoped gateway `connectionId`; otherwise falls back to `FBKIT_NODE_ID` |
+| `ZOOPOST_GATEWAY_POLL_INTERVAL` | `5` | Gateway heartbeat/poll loop delay in seconds; clamped to `1`-`60` seconds |
+| `ZOOPOST_GATEWAY_DISPATCH_LIMIT` | `10` | Max dry-run dispatches polled per gateway cycle; clamped to `1`-`100` |
+| `ZOOPOST_GATEWAY_ACK_TIMEOUT` | `30` | Gateway ACK wait timeout in seconds; clamped to `1`-`300` seconds |
 | `SCHEDULER_CHECK_INTERVAL` | `30` | Scheduler polling interval in seconds |
 | `ACTION_DELAY_MIN` / `ACTION_DELAY_MAX` | `2.0` / `8.0` | Human-like delay range before worker actions |
 | `TYPING_DELAY_MIN` / `TYPING_DELAY_MAX` | `40` / `150` | Typing simulation delay in milliseconds |
@@ -251,6 +257,24 @@ Dashboard session types include `profile_id`, `profile_name`, `last_seen_age_s`,
 | `blocked_reasons` | Account status and exhausted quota reasons such as `account_status:SUSPENDED` or `quota_exhausted:daily_posts` |
 
 If `daily_reset_at` is not today's date, queue summary treats stale daily counters as zero for displayed `used` values and blocked-reason calculation. Missing accounts return `blocked_reasons: ["account_not_found"]`.
+
+## ZooPost Cloud Gateway Runtime
+
+`agent/main.py` starts `run_gateway_loop()` during FastAPI lifespan startup and cancels it during shutdown. The loop returns immediately unless `ZOOPOST_CLOUD_API_URL` and `ZOOPOST_AGENT_CREDENTIAL` are both set.
+
+Verified behavior in `agent/services/zoopost_cloud_agent.py`:
+
+- derives `/agent-gateway/ws` from `ZOOPOST_CLOUD_API_URL`; remote plaintext `http`/`ws` is rejected, loopback plaintext is allowed for local dev, and `https`/`wss` maps to `wss`
+- sends the env-only credential in `agent_hello`; no credential file is written by the runtime loop
+- uses `ZOOPOST_AGENT_INSTALLATION_ID` for an installation-scoped `connectionId` when provided
+- heartbeats connected logged-in Facebook profiles by `fb_uid` and advertises only `publish-dry-run`
+- polls dry-run publish dispatches, maps supported Facebook publish task types to local tasks, and forces local payload `dryRun=true`
+- strips server-owned fields such as approval/live-arm/quota markers before task creation
+- rejects worker payloads or media items that contain local filesystem path fields; accepted media must use opaque refs
+- reports terminal task results to ZooPost Cloud and persists `zoopostResultReported=true` only after cloud ACK
+- recovers unreported terminal ZooPost tasks after reconnect by scanning terminal tasks with `zoopost:` refs
+
+ZooPost Cloud integration does not change Safety Gate defaults: `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, and `APPROVAL_REQUIRED=true` remain the safe baseline.
 
 ## Runtime Dry-Run Validation
 

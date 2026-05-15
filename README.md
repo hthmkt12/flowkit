@@ -123,12 +123,23 @@ Create an agent installation from ZooPost Cloud **Kết nối Agent**, then exch
 ```powershell
 $env:ZOOPOST_CLOUD_BEARER_TOKEN="<zoopost-user-jwt>"
 .\.venv\Scripts\python.exe scripts\zoopost-agent-env-setup.py `
-  --cloud-url http://127.0.0.1:8200 `
+  --cloud-url https://<your-zoopost-cloud-host> `
   --installation-id <agent-installation-id> `
   --registration-token <one-time-registration-token>
 ```
 
-Run the printed commands in the same terminal that starts FBKit. Pairing remains dry-run-only: keep `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`, `API_AUTH_ENABLED=false`, and `WS_AUTH_ENABLED=false`. ZooPost Cloud must not receive cookies, browser profiles, Facebook credentials, or local media filesystem paths.
+Run the printed commands in the same terminal that starts FBKit. The FastAPI lifespan starts the ZooPost Cloud gateway loop automatically, but the loop is inert unless both `ZOOPOST_CLOUD_API_URL` and `ZOOPOST_AGENT_CREDENTIAL` are set.
+
+Gateway runtime notes:
+
+- `ZOOPOST_AGENT_CREDENTIAL` is env-only; do not write it to docs, git, browser storage, or cloud logs.
+- Optional `ZOOPOST_AGENT_INSTALLATION_ID` makes the gateway `connectionId` installation-scoped.
+- Remote gateway URLs must use `https` or `wss`; plaintext `http`/`ws` is accepted only for loopback local dev.
+- `ZOOPOST_GATEWAY_ACK_TIMEOUT` controls gateway ACK waits.
+- The gateway heartbeats connected Facebook `fb_uid` profiles, polls ZooPost dry-run publish dispatches, creates local tasks with `dryRun=true`, strips server-owned fields, rejects local media filesystem paths, and reports terminal results back after local completion.
+- If a terminal ZooPost task was not ACK-reported before disconnect, FBKit retries result reporting after reconnect.
+
+Pairing remains dry-run-only: keep `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`, `API_AUTH_ENABLED=false`, and `WS_AUTH_ENABLED=false`. ZooPost Cloud must not receive cookies, browser profiles, Facebook credentials, local media filesystem paths, or live-action approval fields.
 
 ## Safety Gate Defaults
 

@@ -13,7 +13,15 @@ class FakeCloudSocket:
         self.sent.append(json.loads(message))
 
     async def recv(self):
-        return json.dumps(self.incoming.pop(0))
+        value = self.incoming.pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        return json.dumps(value)
+
+
+class HangingCloudSocket(FakeCloudSocket):
+    async def recv(self):
+        await asyncio.Future()
 
 
 @pytest.fixture
@@ -533,3 +541,166 @@ async def test_gateway_result_message_matches_cloud_contract(db):
     assert result_message["resultStatus"] == "posted"
     assert result_message["externalPostId"] == "post-1"
     assert "localTaskId" not in result_message
+
+
+@pytest.mark.asyncio
+async def test_gateway_heartbeat_updates_profiles():
+    from agent.services.zoopost_cloud_agent import GatewaySession, heartbeat_gateway_session
+
+    socket = FakeCloudSocket([{"type": "agent_heartbeat_ack", "messageId": "heartbeat-1"}])
+    session = GatewaySession(session_id="session-1", session_generation=1, connection_id="conn-1")
+
+    await heartbeat_gateway_session(socket, session, [{"platform": "facebook", "channel_type": "profile", "external_id": "page-1"}])
+
+    assert socket.sent[0]["type"] == "agent_heartbeat"
+    assert socket.sent[0]["sessionId"] == "session-1"
+    assert socket.sent[0]["sequence"] == 2
+    assert socket.sent[0]["capabilities"] == [{"name": "publish-dry-run"}]
+    assert socket.sent[0]["connectedProfiles"][0]["channel_type"] == "profile"
+    assert socket.sent[0]["connectedProfiles"][0]["external_id"] == "page-1"
+
+
+def test_connected_profiles_uses_neutral_profile_channel_type(monkeypatch):
+    from agent.services import zoopost_cloud_agent
+
+    class FakeClient:
+        ws_stats = {
+            "sessions": [
+                {"logged_in": True, "fb_uid": "uid-1"},
+                {"logged_in": False, "fb_uid": "uid-2"},
+                {"logged_in": True, "fb_uid": ""},
+            ]
+        }
+
+    monkeypatch.setattr(zoopost_cloud_agent, "get_fb_client", lambda: FakeClient())
+
+    assert zoopost_cloud_agent._connected_profiles() == [
+        {"platform": "facebook", "channel_type": "profile", "external_id": "uid-1"}
+    ]
+
+
+def test_gateway_url_uses_websocket_scheme():
+    from agent.services.zoopost_cloud_agent import _gateway_ws_url
+
+    assert _gateway_ws_url("http://127.0.0.1:8200") == "ws://127.0.0.1:8200/agent-gateway/ws"
+    assert _gateway_ws_url("http://localhost:8200") == "ws://localhost:8200/agent-gateway/ws"
+    assert _gateway_ws_url("https://cloud.example") == "wss://cloud.example/agent-gateway/ws"
+
+
+def test_gateway_url_rejects_plaintext_remote_hosts():
+    from agent.services.zoopost_cloud_agent import _gateway_ws_url
+
+    with pytest.raises(ValueError, match="https"):
+        _gateway_ws_url("http://cloud.example")
+
+
+@pytest.mark.asyncio
+async def test_gateway_receive_times_out_when_cloud_stops_acknowledging(monkeypatch):
+    from agent import config
+    from agent.services.zoopost_cloud_agent import GatewaySession, heartbeat_gateway_session
+
+    monkeypatch.setattr(config, "ZOOPOST_GATEWAY_ACK_TIMEOUT", 0.01)
+    socket = HangingCloudSocket([])
+    session = GatewaySession(session_id="session-1", session_generation=1, connection_id="conn-1")
+
+    with pytest.raises(TimeoutError):
+        await heartbeat_gateway_session(socket, session, [])
+
+
+@pytest.mark.asyncio
+async def test_gateway_sequence_advances_after_ack_timeout(monkeypatch):
+    from agent import config
+    from agent.services.zoopost_cloud_agent import GatewayConnectionState, GatewaySession, _sync_gateway_sequence, heartbeat_gateway_session
+
+    monkeypatch.setattr(config, "ZOOPOST_GATEWAY_ACK_TIMEOUT", 0.01)
+    state = GatewayConnectionState(connection_id="conn-1", next_hello_sequence=2)
+    socket = HangingCloudSocket([])
+    session = GatewaySession(session_id="session-1", session_generation=1, connection_id="conn-1", sequence=1)
+
+    with pytest.raises(TimeoutError):
+        try:
+            await heartbeat_gateway_session(socket, session, [])
+        finally:
+            _sync_gateway_sequence(state, session)
+
+    assert socket.sent[0]["sequence"] == 2
+    assert state.next_hello_sequence == 3
+
+
+@pytest.mark.asyncio
+async def test_report_terminal_results_sends_and_clears_completed_dispatch(db):
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import GatewaySession, _report_terminal_results
+
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    task = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True, "content": "Done"})
+    await crud.update_task(task["id"], status="COMPLETED", result=json.dumps({"externalPostId": "post-1"}))
+    pending = {"dispatch-1": task["id"]}
+    socket = FakeCloudSocket([{"type": "agent_dispatch_result_ack", "messageId": "result-1", "targetId": "target-1"}])
+    session = GatewaySession(session_id="session-1", session_generation=1, connection_id="conn-1")
+
+    await _report_terminal_results(socket, session, pending)
+
+    assert pending == {}
+    assert socket.sent[0]["type"] == "agent_dispatch_result"
+    assert socket.sent[0]["dispatchId"] == "dispatch-1"
+    assert socket.sent[0]["resultStatus"] == "posted"
+    updated = await crud.get_task(task["id"])
+    assert json.loads(updated["result"])["zoopostResultReported"] is True
+
+
+@pytest.mark.asyncio
+async def test_gateway_session_can_start_with_resumed_sequence():
+    from agent.services.zoopost_cloud_agent import open_gateway_session
+
+    socket = FakeCloudSocket([{"type": "agent_hello_ack", "sessionId": "session-1", "sessionGeneration": 1, "connectionId": "conn-1"}])
+
+    session = await open_gateway_session(socket, "credential", "conn-1", [], sequence=7)
+
+    assert socket.sent[0]["type"] == "agent_hello"
+    assert socket.sent[0]["sequence"] == 7
+    assert session.sequence == 7
+
+
+@pytest.mark.asyncio
+async def test_recovered_terminal_results_are_reported_once(db):
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import GatewaySession, _report_recovered_terminal_results
+
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    task = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True, "content": "Done"}, ref_id="zoopost:dispatch-recovered")
+    await crud.update_task(task["id"], status="COMPLETED", result=json.dumps({"externalPostId": "post-1"}))
+    socket = FakeCloudSocket([{"type": "agent_dispatch_result_ack", "messageId": "result-1", "targetId": "target-1"}])
+    session = GatewaySession(session_id="session-1", session_generation=1, connection_id="conn-1")
+
+    await _report_recovered_terminal_results(socket, session)
+
+    assert socket.sent[0]["type"] == "agent_dispatch_result"
+    assert socket.sent[0]["dispatchId"] == "dispatch-recovered"
+    updated = await crud.get_task(task["id"])
+    assert json.loads(updated["result"])["zoopostResultReported"] is True
+
+    second_socket = FakeCloudSocket([])
+    await _report_recovered_terminal_results(second_socket, session)
+    assert second_socket.sent == []
+
+
+@pytest.mark.asyncio
+async def test_recovered_terminal_results_skip_reported_rows_before_limit(db, monkeypatch):
+    from agent import config
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import GatewaySession, _report_recovered_terminal_results
+
+    monkeypatch.setattr(config, "ZOOPOST_GATEWAY_DISPATCH_LIMIT", 1)
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    reported = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True}, ref_id="zoopost:dispatch-reported")
+    await crud.update_task(reported["id"], status="COMPLETED", result=json.dumps({"zoopostResultReported": True}))
+    unreported = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True}, ref_id="zoopost:dispatch-unreported")
+    await crud.update_task(unreported["id"], status="COMPLETED", result=json.dumps({"externalPostId": "post-2"}))
+    socket = FakeCloudSocket([{"type": "agent_dispatch_result_ack", "messageId": "result-1", "targetId": "target-1"}])
+    session = GatewaySession(session_id="session-1", session_generation=1, connection_id="conn-1")
+
+    await _report_recovered_terminal_results(socket, session)
+
+    assert len(socket.sent) == 1
+    assert socket.sent[0]["dispatchId"] == "dispatch-unreported"

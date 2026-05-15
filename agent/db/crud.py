@@ -421,6 +421,18 @@ async def get_task_by_ref_id(ref_id: str) -> dict | None:
     return _row_to_dict(await cur.fetchone())
 
 
+async def list_terminal_zoopost_tasks(limit: int = 100) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM task WHERE ref_id LIKE 'zoopost:%' "
+        "AND status IN ('COMPLETED', 'FAILED', 'CANCELLED') "
+        "AND COALESCE(result, '') NOT LIKE '%\"zoopostResultReported\"%' "
+        "ORDER BY updated_at ASC LIMIT ?",
+        (limit,),
+    )
+    return _rows_to_list(await cur.fetchall())
+
+
 async def rollback():
     db = await get_db()
     await db.rollback()

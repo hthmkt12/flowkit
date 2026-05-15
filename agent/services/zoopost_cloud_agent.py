@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import aiosqlite
+import websockets
 
+from agent import config
 from agent.db import crud
+from agent.services.fb_client import get_fb_client
 
 DISPATCH_REF_PREFIX = "zoopost:"
 SERVER_OWNED_FIELDS = {
@@ -38,6 +45,13 @@ TERMINAL_STATUS_MAP = {
     "FAILED": "failed",
     "CANCELLED": "failed",
 }
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GatewayConnectionState:
+    connection_id: str
+    next_hello_sequence: int = 1
 
 
 @dataclass
@@ -52,6 +66,147 @@ class GatewaySession:
         return self.sequence
 
 
+async def run_gateway_loop():
+    if not config.ZOOPOST_CLOUD_API_URL or not config.ZOOPOST_AGENT_CREDENTIAL:
+        return
+    state = GatewayConnectionState(connection_id=_gateway_connection_id(), next_hello_sequence=_initial_gateway_sequence())
+    while True:
+        try:
+            await _run_gateway_session(state)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("ZooPost gateway loop disconnected: %s", exc)
+            await asyncio.sleep(config.ZOOPOST_GATEWAY_POLL_INTERVAL)
+
+
+async def _run_gateway_session(state: GatewayConnectionState):
+    ws_url = _gateway_ws_url(config.ZOOPOST_CLOUD_API_URL)
+    async with websockets.connect(ws_url) as websocket:
+        hello_sequence = state.next_hello_sequence
+        state.next_hello_sequence = hello_sequence + 1
+        session = await open_gateway_session(
+            websocket,
+            config.ZOOPOST_AGENT_CREDENTIAL,
+            state.connection_id,
+            _connected_profiles(),
+            sequence=hello_sequence,
+            live_guard_enabled=False,
+        )
+        _sync_gateway_sequence(state, session)
+        logger.info("ZooPost gateway connected")
+        pending_dispatches: dict[str, str] = {}
+        while True:
+            try:
+                await heartbeat_gateway_session(websocket, session, _connected_profiles(), live_guard_enabled=False)
+            finally:
+                _sync_gateway_sequence(state, session)
+            try:
+                await _report_terminal_results(websocket, session, pending_dispatches)
+            finally:
+                _sync_gateway_sequence(state, session)
+            try:
+                await _report_recovered_terminal_results(websocket, session)
+            finally:
+                _sync_gateway_sequence(state, session)
+            try:
+                results = await poll_gateway_dispatches(websocket, session, limit=config.ZOOPOST_GATEWAY_DISPATCH_LIMIT)
+            finally:
+                _sync_gateway_sequence(state, session)
+            for result in results:
+                dispatch_id = result.get("dispatchId")
+                task_id = result.get("localTaskId")
+                if isinstance(dispatch_id, str) and isinstance(task_id, str):
+                    pending_dispatches[dispatch_id] = task_id
+            try:
+                await _report_terminal_results(websocket, session, pending_dispatches)
+            finally:
+                _sync_gateway_sequence(state, session)
+            try:
+                await _report_recovered_terminal_results(websocket, session)
+            finally:
+                _sync_gateway_sequence(state, session)
+            await asyncio.sleep(config.ZOOPOST_GATEWAY_POLL_INTERVAL)
+
+def _sync_gateway_sequence(state: GatewayConnectionState, session: GatewaySession):
+    state.next_hello_sequence = max(state.next_hello_sequence, session.sequence + 1)
+
+
+async def _report_terminal_results(websocket, session: GatewaySession, pending_dispatches: dict[str, str]):
+    for dispatch_id, task_id in list(pending_dispatches.items()):
+        task = await crud.get_task(task_id)
+        if task and task.get("status") in TERMINAL_STATUS_MAP:
+            if not _task_result_reported(task):
+                await send_gateway_task_result(websocket, session, dispatch_id, task)
+                await _mark_task_result_reported(task)
+            pending_dispatches.pop(dispatch_id, None)
+
+
+async def _report_recovered_terminal_results(websocket, session: GatewaySession):
+    for task in await crud.list_terminal_zoopost_tasks(limit=config.ZOOPOST_GATEWAY_DISPATCH_LIMIT):
+        if _task_result_reported(task):
+            continue
+        dispatch_id = _dispatch_id_from_ref(task.get("ref_id"))
+        if dispatch_id:
+            await send_gateway_task_result(websocket, session, dispatch_id, task)
+            await _mark_task_result_reported(task)
+
+
+async def _mark_task_result_reported(task: dict[str, Any]):
+    result = _task_result(task)
+    result["zoopostResultReported"] = True
+    await crud.update_task(task["id"], result=json.dumps(result))
+
+
+def _task_result_reported(task: dict[str, Any]) -> bool:
+    return _task_result(task).get("zoopostResultReported") is True
+
+
+def _dispatch_id_from_ref(ref_id: Any) -> str | None:
+    if not isinstance(ref_id, str) or not ref_id.startswith(DISPATCH_REF_PREFIX):
+        return None
+    dispatch_id = ref_id[len(DISPATCH_REF_PREFIX):]
+    return dispatch_id or None
+
+
+def _gateway_connection_id() -> str:
+    if config.ZOOPOST_AGENT_INSTALLATION_ID:
+        return f"fbkit-installation-{config.ZOOPOST_AGENT_INSTALLATION_ID}"
+    return f"fbkit-{config.FBKIT_NODE_ID}"
+
+
+def _initial_gateway_sequence() -> int:
+    return time.time_ns() // 1000
+
+
+def _connected_profiles() -> list[dict[str, Any]]:
+    profiles = []
+    for session in get_fb_client().ws_stats.get("sessions", []):
+        if session.get("logged_in") and session.get("fb_uid"):
+            profiles.append({"platform": "facebook", "channel_type": "profile", "external_id": str(session["fb_uid"])})
+    return profiles
+
+
+def _gateway_ws_url(cloud_api_url: str) -> str:
+    parsed = urlparse(cloud_api_url.rstrip("/"))
+    if parsed.scheme in {"https", "wss"}:
+        scheme = "wss"
+    elif parsed.scheme in {"http", "ws"} and _is_loopback_host(parsed.hostname):
+        scheme = "ws"
+    else:
+        raise ValueError("ZooPost cloud gateway requires https/wss unless using localhost")
+    return urlunparse((scheme, parsed.netloc, "/agent-gateway/ws", "", "", ""))
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if hostname in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(hostname or "").is_loopback
+    except ValueError:
+        return False
+
+
 async def open_gateway_session(
     websocket,
     credential: str,
@@ -59,6 +214,7 @@ async def open_gateway_session(
     connected_profiles: list[dict[str, Any]],
     *,
     capabilities: list[dict[str, Any]] | None = None,
+    sequence: int = 1,
     live_guard_enabled: bool = False,
 ) -> GatewaySession:
     await _send_json(
@@ -67,7 +223,7 @@ async def open_gateway_session(
             "type": "agent_hello",
             "messageId": _message_id("hello"),
             "timestamp": _timestamp(),
-            "sequence": 1,
+            "sequence": sequence,
             "credential": credential,
             "connectionId": connection_id,
             "capabilities": DEFAULT_CAPABILITIES if capabilities is None else capabilities,
@@ -82,7 +238,33 @@ async def open_gateway_session(
         session_id=ack["sessionId"],
         session_generation=ack["sessionGeneration"],
         connection_id=ack["connectionId"],
+        sequence=sequence,
     )
+
+
+async def heartbeat_gateway_session(
+    websocket,
+    session: GatewaySession,
+    connected_profiles: list[dict[str, Any]],
+    *,
+    live_guard_enabled: bool = False,
+):
+    await _send_json(
+        websocket,
+        {
+            "type": "agent_heartbeat",
+            "messageId": _message_id("heartbeat"),
+            "sessionId": session.session_id,
+            "timestamp": _timestamp(),
+            "sequence": session.next_sequence(),
+            "capabilities": DEFAULT_CAPABILITIES,
+            "connectedProfiles": connected_profiles,
+            "liveGuardEnabled": live_guard_enabled,
+        },
+    )
+    ack = await _receive_json(websocket)
+    if ack.get("type") != "agent_heartbeat_ack":
+        raise ValueError("cloud gateway rejected heartbeat")
 
 
 async def poll_gateway_dispatches(websocket, session: GatewaySession, *, limit: int = 10) -> list[dict[str, Any]]:
@@ -311,7 +493,7 @@ async def _send_json(websocket, payload: dict[str, Any]):
 
 
 async def _receive_json(websocket) -> dict[str, Any]:
-    return json.loads(await websocket.recv())
+    return json.loads(await asyncio.wait_for(websocket.recv(), timeout=config.ZOOPOST_GATEWAY_ACK_TIMEOUT))
 
 
 def _message_id(prefix: str) -> str:

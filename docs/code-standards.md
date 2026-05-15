@@ -1,6 +1,6 @@
 # FBKit Code Standards
 
-Last updated: 2026-05-07
+Last updated: 2026-05-15
 
 ## Repository Structure
 
@@ -61,6 +61,16 @@ Last updated: 2026-05-07
 - Pages are route-level components in `dashboard/src/pages/` and are wired from `dashboard/src/App.tsx`.
 - Dev proxy configuration belongs in `dashboard/vite.config.ts`; cloud-owned ZooPost API prefixes must stay ahead of the local FBKit `/api` fallback.
 - Do not expose `ZOOPOST_CLOUD_DEV_BEARER_TOKEN` through `VITE_` variables or client code; it is a Vite-server-only dev proxy credential.
+
+## ZooPost Gateway Standards
+
+- Keep the ZooPost gateway loop optional and env-gated. Without both `ZOOPOST_CLOUD_API_URL` and `ZOOPOST_AGENT_CREDENTIAL`, startup must remain local-only.
+- Treat `ZOOPOST_AGENT_CREDENTIAL` as env-only secret material. Do not persist it in docs, git, browser storage, or cloud logs.
+- Require remote ZooPost gateway URLs to use `https`/`wss`; allow plaintext `http`/`ws` only for loopback local dev.
+- Keep ZooPost dispatch handling dry-run-only: force local task payload `dryRun=true`, advertise only `publish-dry-run`, and do not document or add live dispatch behavior.
+- Strip server-owned fields from cloud dispatch payloads before local task creation, including approval, live-arm, quota, and server-approved markers.
+- Reject local filesystem media paths from cloud dispatches. Cloud media must use opaque refs, not local files.
+- Persist ZooPost result reporting only after cloud ACK so reconnect recovery can retry unreported terminal tasks.
 
 ## Extension Standards
 

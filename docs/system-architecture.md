@@ -1,6 +1,6 @@
 # FBKit System Architecture
 
-Last updated: 2026-05-07
+Last updated: 2026-05-15
 
 ## Architecture Summary
 
@@ -10,7 +10,7 @@ FBKit is a local-first automation system. The FastAPI agent owns persistence, sa
 
 | Component | Path | Responsibility |
 |---|---|---|
-| FastAPI app | `agent/main.py` | Lifespan startup/shutdown, router registration, health/status endpoints, dashboard WebSocket |
+| FastAPI app | `agent/main.py` | Lifespan startup/shutdown, router registration, health/status endpoints, dashboard WebSocket, ZooPost gateway loop task |
 | Config | `agent/config.py` | Environment-backed runtime settings |
 | Auth | `agent/services/auth.py`, `agent/main.py` | Optional REST API-key validation and WebSocket token checks; both are mandatory for live arming/approval |
 | SQLite schema | `agent/db/schema.py` | Tables, indexes, connection lifecycle, lightweight migrations, live account lease table |
@@ -21,6 +21,7 @@ FBKit is a local-first automation system. The FastAPI agent owns persistence, sa
 | Scheduler | `agent/services/scheduler.py` | Due scheduled post/message claim and enqueue |
 | FBClient | `agent/services/fb_client.py` | Multi-extension session registry, stale health metadata, and command routing by `fb_uid` |
 | Chrome extension | `extension/` | Facebook page bridge and DOM-action guard |
+| ZooPost Cloud gateway | `agent/services/zoopost_cloud_agent.py` | Optional env-enabled gateway loop for dry-run publish dispatches and terminal result reporting |
 | Dashboard | `dashboard/` | Local web UI and live event feed |
 
 ## Data Flow
@@ -39,6 +40,15 @@ REST caller or dashboard
   -> WebSocket command to Chrome extension
   -> extension DOM-action guard
   -> logged-in Facebook browser session
+
+ZooPost Cloud, when ZOOPOST_CLOUD_API_URL and ZOOPOST_AGENT_CREDENTIAL are set
+  -> FastAPI lifespan starts ZooPost gateway loop
+  -> local agent opens /agent-gateway/ws with env-only credential
+  -> gateway heartbeat reports connected fb_uid profiles and publish-dry-run capability
+  -> gateway poll receives dry-run publish dispatches
+  -> adapter strips server-owned fields, rejects local media paths, and creates dryRun=true local tasks
+  -> worker processes the local dry-run task through the same Safety Gate and extension path
+  -> gateway reports terminal result after local completion and cloud ACK
 ```
 
 ## Safety Boundaries
@@ -83,6 +93,7 @@ SQLite runs with WAL mode and foreign keys enabled in `get_db()`.
 | Agent REST API | `http://127.0.0.1:8100` | `/health`, `/api/status`, and routers under `/api` |
 | Extension WebSocket | `ws://127.0.0.1:9222` | Used by Chrome extension background/content scripts |
 | Dashboard dev server | `http://127.0.0.1:5173` | Vite dev server routes ZooPost Cloud prefixes to `127.0.0.1:8200`, keeps FBKit `/api` fallback plus `/health` and `/ws` on `127.0.0.1:8100`, and can inject `ZOOPOST_CLOUD_DEV_BEARER_TOKEN` server-side for cloud API smoke tests |
+| ZooPost gateway | Derived `/agent-gateway/ws` from `ZOOPOST_CLOUD_API_URL` | Inert unless `ZOOPOST_CLOUD_API_URL` and `ZOOPOST_AGENT_CREDENTIAL` are set; rejects remote plaintext `http`/`ws`, allows loopback plaintext for local dev, and uses `wss` for `https`/`wss` |
 | Dashboard WebSocket | `/ws/dashboard` on API server | Emits event-bus messages to the dashboard |
 
 ## Live Control Plane

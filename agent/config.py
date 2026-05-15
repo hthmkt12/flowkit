@@ -60,6 +60,29 @@ LIVE_ACTIONS_ENABLED = _is_truthy(os.environ.get("LIVE_ACTIONS_ENABLED"), defaul
 DRY_RUN_DEFAULT = _is_truthy(os.environ.get("DRY_RUN_DEFAULT"), default=True)
 APPROVAL_REQUIRED = _is_truthy(os.environ.get("APPROVAL_REQUIRED"), default=True)
 
+# ─── ZooPost Cloud Gateway ───────────────────────────────────
+ZOOPOST_CLOUD_API_URL = os.environ.get("ZOOPOST_CLOUD_API_URL", "").strip()
+ZOOPOST_AGENT_CREDENTIAL = os.environ.get("ZOOPOST_AGENT_CREDENTIAL", "").strip()
+ZOOPOST_AGENT_INSTALLATION_ID = os.environ.get("ZOOPOST_AGENT_INSTALLATION_ID", "").strip()
+ZOOPOST_GATEWAY_POLL_INTERVAL = _clamped_int(
+    os.environ.get("ZOOPOST_GATEWAY_POLL_INTERVAL"),
+    default=5,
+    minimum=1,
+    maximum=60,
+)
+ZOOPOST_GATEWAY_DISPATCH_LIMIT = _clamped_int(
+    os.environ.get("ZOOPOST_GATEWAY_DISPATCH_LIMIT"),
+    default=10,
+    minimum=1,
+    maximum=100,
+)
+ZOOPOST_GATEWAY_ACK_TIMEOUT = _clamped_int(
+    os.environ.get("ZOOPOST_GATEWAY_ACK_TIMEOUT"),
+    default=30,
+    minimum=1,
+    maximum=300,
+)
+
 # ─── Scheduler ───────────────────────────────────────────────
 SCHEDULER_CHECK_INTERVAL = int(os.environ.get("SCHEDULER_CHECK_INTERVAL", "30"))  # seconds
 
