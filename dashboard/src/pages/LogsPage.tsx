@@ -19,7 +19,9 @@ export default function LogsPage() {
     try {
       const data = await fetchAPI<ActivityLog[]>('/api/accounts/activity')
       setLogs(data)
-    } catch {}
+    } catch (error) {
+      void error
+    }
     finally { setLoading(false) }
   }, [])
 
