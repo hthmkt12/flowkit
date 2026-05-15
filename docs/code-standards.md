@@ -59,7 +59,8 @@ Last updated: 2026-05-07
 - Shared API helpers live in `dashboard/src/api/`.
 - Shared TypeScript types live in `dashboard/src/types/`.
 - Pages are route-level components in `dashboard/src/pages/` and are wired from `dashboard/src/App.tsx`.
-- Dev proxy configuration belongs in `dashboard/vite.config.ts`.
+- Dev proxy configuration belongs in `dashboard/vite.config.ts`; cloud-owned ZooPost API prefixes must stay ahead of the local FBKit `/api` fallback.
+- Do not expose `ZOOPOST_CLOUD_DEV_BEARER_TOKEN` through `VITE_` variables or client code; it is a Vite-server-only dev proxy credential.
 
 ## Extension Standards
 

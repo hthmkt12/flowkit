@@ -82,7 +82,7 @@ SQLite runs with WAL mode and foreign keys enabled in `get_db()`.
 |---|---|---|
 | Agent REST API | `http://127.0.0.1:8100` | `/health`, `/api/status`, and routers under `/api` |
 | Extension WebSocket | `ws://127.0.0.1:9222` | Used by Chrome extension background/content scripts |
-| Dashboard dev server | `http://127.0.0.1:5173` | Vite dev server proxies `/api`, `/health`, and `/ws` |
+| Dashboard dev server | `http://127.0.0.1:5173` | Vite dev server routes ZooPost Cloud prefixes to `127.0.0.1:8200`, keeps FBKit `/api` fallback plus `/health` and `/ws` on `127.0.0.1:8100`, and can inject `ZOOPOST_CLOUD_DEV_BEARER_TOKEN` server-side for cloud API smoke tests |
 | Dashboard WebSocket | `/ws/dashboard` on API server | Emits event-bus messages to the dashboard |
 
 ## Live Control Plane

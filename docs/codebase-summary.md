@@ -228,7 +228,7 @@ The dashboard is a Vite React app in `dashboard/`.
 | Verified file | Behavior |
 |---|---|
 | `dashboard/package.json` | Scripts: `dev`, `build`, `lint`, `preview`; dependencies include React 19, React Router 7, Vite 8, Tailwind 4, lucide-react |
-| `dashboard/vite.config.ts` | Dev server port `5173`; proxies `/api` and `/health` to `127.0.0.1:8100`; proxies `/ws` to WebSocket target `ws://127.0.0.1:8100` |
+| `dashboard/vite.config.ts` | Dev server port `5173`; routes ZooPost Cloud prefixes (`/api/channels`, `/api/content-items`, `/api/media-assets`, `/api/publish-jobs`, `/api/live-arms`, `/api/dashboard`, `/api/agent-installations`) and `/agent-gateway` to `127.0.0.1:8200`; keeps FBKit fallback `/api`, `/health`, and `/ws` on `127.0.0.1:8100`; supports server-side-only `ZOOPOST_CLOUD_DEV_BEARER_TOKEN`; Vitest uses `jsdom` via the local Vite config |
 | `dashboard/src/App.tsx` | Routes: `/`, `/accounts`, `/tasks`, `/seeding`, `/spy`, `/logs` |
 | `dashboard/src/pages/DashboardPage.tsx` | Polls status/task/account/seeding/spy APIs and renders live event feed from dashboard WebSocket |
 
