@@ -105,7 +105,7 @@ Lease TTL:
 
 - Add `LIVE_ACCOUNT_LEASE_TTL_SECONDS` in `agent/config.py`, default `900`.
 - Clamp minimum to `60` and maximum to `3600` in config or CRUD helper.
-- Risk note: if browser dispatch can exceed TTL, add heartbeat refresh in a later phase. For this minimal phase, release in `finally` + conservative TTL is acceptable; tests cover expired reclaim.
+- Risk note: browser dispatch that exceeds TTL is protected by worker lease heartbeat refresh while the task is processing; release in `finally` and expired reclaim remain the crash-recovery path.
 
 ## Data Flows
 
@@ -320,7 +320,7 @@ Expected: fail because table/helpers do not exist.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---:|---:|---|
-| Lease expires while live task still running, another worker reclaims account | Medium | High | Default TTL conservative; release in finally; document future heartbeat if task runtime exceeds TTL; do not use this as permission to enable live actions. |
+| Lease expires while live task still running, another worker reclaims account | Low | High | Worker refreshes matching active lease during processing; effective heartbeat interval is clamped to at most half of TTL; release in finally; do not use this as permission to enable live actions. |
 | Lease acquired then task claim fails, stale lease blocks account | Low | Medium | Claim code must release on `rowcount != 1`; targeted test. |
 | SQLite write contention with multiple workers | Medium | Medium | Short single-statement acquire/release; no long transactions; WAL already enabled. |
 | Dry-run accidentally blocked by lease | Medium | Medium | Explicit dry-run exemption tests. |
@@ -402,11 +402,11 @@ Expected runtime smoke: status includes `worker.node_id`; live actions remain di
 
 ## Residual Risks
 
-- Lease heartbeat refresh is not implemented. Keep live tasks within TTL or prioritize heartbeat refresh before long live workflows.
+- Lease heartbeat refresh is implemented for matching account/task/node leases during task processing. The worker clamps the effective heartbeat interval to at most half of TTL and retains conservative TTL values for crash recovery.
 - `/api/status` exposes operational IDs/session metadata. Keep API local or enable API auth before non-local exposure.
 - Future hardening: multi-process SQLite contention integration test.
 
 ## Unresolved Questions
 
-- What maximum live task duration should trigger heartbeat refresh work?
+- What heartbeat interval and TTL values should be used for controlled live pilots?
 - Should future diagnostics include recently expired leases, or keep `/api/status` active leases only?

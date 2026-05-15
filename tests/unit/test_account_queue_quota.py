@@ -1,4 +1,5 @@
 import json
+import asyncio
 from datetime import date, timedelta
 
 import pytest
@@ -150,6 +151,78 @@ async def test_expired_live_account_lease_can_be_reclaimed(account_a):
     assert lease["account_id"] == account_a["id"]
     assert lease["task_id"] == second_task["id"]
     assert lease["node_id"] == "node-b"
+
+
+@pytest.mark.asyncio
+async def test_refresh_live_account_lease_extends_matching_active_lease(account_a):
+    task = await crud.create_task(
+        account_id=account_a["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({"content": "heartbeat", "dryRun": False}),
+        enforce_safety=False,
+    )
+    await crud.acquire_live_account_lease(account_a["id"], task["id"], "node-a", 60)
+    db = await crud.get_db()
+    old_heartbeat = (utc_now() - timedelta(seconds=20)).replace(microsecond=0).isoformat()
+    old_expires = (utc_now() + timedelta(seconds=5)).replace(microsecond=0).isoformat()
+    await db.execute(
+        "UPDATE live_account_lease SET heartbeat_at = ?, expires_at = ? WHERE account_id = ?",
+        (old_heartbeat, old_expires, account_a["id"]),
+    )
+    await db.commit()
+
+    refreshed = await crud.refresh_live_account_lease(account_a["id"], task["id"], "node-a", 60)
+
+    assert refreshed["heartbeat_at"] > old_heartbeat
+    assert refreshed["expires_at"] > old_expires
+
+
+@pytest.mark.asyncio
+async def test_refresh_live_account_lease_requires_matching_task_and_node(account_a):
+    task = await crud.create_task(
+        account_id=account_a["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({"content": "heartbeat", "dryRun": False}),
+        enforce_safety=False,
+    )
+    lease = await crud.acquire_live_account_lease(account_a["id"], task["id"], "node-a", 60)
+
+    wrong_task = await crud.refresh_live_account_lease(account_a["id"], "other-task", "node-a", 60)
+    wrong_node = await crud.refresh_live_account_lease(account_a["id"], task["id"], "node-b", 60)
+
+    assert wrong_task is None
+    assert wrong_node is None
+    assert await crud.list_active_live_account_leases() == [lease]
+
+
+@pytest.mark.asyncio
+async def test_refresh_live_account_lease_rejects_expired_matching_lease(account_a):
+    task = await crud.create_task(
+        account_id=account_a["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({"content": "expired heartbeat", "dryRun": False}),
+        enforce_safety=False,
+    )
+    await crud.acquire_live_account_lease(account_a["id"], task["id"], "node-a", 60)
+    db = await crud.get_db()
+    expired_at = (utc_now() - timedelta(seconds=1)).replace(microsecond=0).isoformat()
+    await db.execute(
+        "UPDATE live_account_lease SET expires_at = ? WHERE account_id = ?",
+        (expired_at, account_a["id"]),
+    )
+    await db.commit()
+
+    refreshed = await crud.refresh_live_account_lease(account_a["id"], task["id"], "node-a", 60)
+
+    assert refreshed is None
+
+
+def test_worker_clamps_live_lease_heartbeat_interval_below_ttl(monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACCOUNT_LEASE_TTL_SECONDS", 60, raising=False)
+
+    worker = processor.WorkerController(live_lease_heartbeat_seconds=300)
+
+    assert worker.live_lease_heartbeat_seconds == 30
 
 
 @pytest.mark.asyncio
@@ -375,6 +448,81 @@ async def test_worker_releases_live_account_lease_after_processing(account_a, mo
     await worker._process_task(task, live_account_id=account_a["id"], live_lease=lease)
 
     assert await crud.list_active_live_account_leases() == []
+
+
+@pytest.mark.asyncio
+async def test_worker_refreshes_live_account_lease_during_processing(account_a, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+    monkeypatch.setattr("agent.config.DRY_RUN_DEFAULT", False, raising=False)
+
+    class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return True
+
+    monkeypatch.setattr(processor, "get_fb_client", lambda: FakeClient())
+    monkeypatch.setattr(processor, "action_delay", lambda: None)
+    arm = await crud.arm_live_actions(account_a["id"], ["POST_TEXT"], 300, created_by="unit-test")
+    task = await crud.create_task(
+        account_id=account_a["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({"content": "long", "dryRun": False, "_serverApproved": True, "_liveArmId": arm["id"]}),
+        enforce_safety=False,
+    )
+    lease = await crud.acquire_live_account_lease(account_a["id"], task["id"], "node-a", 60)
+    refresh_calls = []
+    original_refresh = crud.refresh_live_account_lease
+
+    async def track_refresh(*args, **kwargs):
+        refresh_calls.append(args)
+        return await original_refresh(*args, **kwargs)
+
+    monkeypatch.setattr(processor.crud, "refresh_live_account_lease", track_refresh)
+    worker = processor.WorkerController(node_id="node-a", live_lease_heartbeat_seconds=0.01)
+
+    async def slow_dispatch(*args, **kwargs):
+        await asyncio.sleep(0.03)
+        return {"success": True}
+
+    monkeypatch.setattr(worker, "_dispatch", slow_dispatch)
+
+    await worker._process_task(task, live_account_id=account_a["id"], live_lease=lease)
+
+    assert refresh_calls
+    assert refresh_calls[0][:3] == (account_a["id"], task["id"], "node-a")
+
+
+@pytest.mark.asyncio
+async def test_worker_cleanup_survives_live_account_lease_heartbeat_error(account_a, monkeypatch):
+    task = await crud.create_task(
+        account_id=account_a["id"],
+        task_type="POST_TEXT",
+        payload=json.dumps({"content": "heartbeat error", "dryRun": False}),
+        enforce_safety=False,
+    )
+    lease = await crud.acquire_live_account_lease(account_a["id"], task["id"], "node-a", 60)
+    worker = processor.WorkerController(node_id="node-a", live_lease_heartbeat_seconds=0.01)
+    worker._active_count = 1
+    worker._active_live_account_ids.add(account_a["id"])
+
+    async def raise_refresh(*args, **kwargs):
+        raise RuntimeError("heartbeat db unavailable")
+
+    async def slow_dispatch(*args, **kwargs):
+        await asyncio.sleep(0.03)
+        return {"success": True}
+
+    monkeypatch.setattr(processor.crud, "refresh_live_account_lease", raise_refresh)
+    monkeypatch.setattr(worker, "_dispatch", slow_dispatch)
+    monkeypatch.setattr(processor, "action_delay", lambda: None)
+
+    await worker._process_task(task, live_account_id=account_a["id"], live_lease=lease)
+
+    assert await crud.list_active_live_account_leases() == []
+    assert account_a["id"] not in worker.active_live_account_ids
+    assert worker.active_count == 0
 
 
 @pytest.mark.asyncio

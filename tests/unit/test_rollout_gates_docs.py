@@ -45,7 +45,8 @@ def test_rollout_gates_doc_covers_phase4_operational_limits():
     for required in [
         "FBKIT_NODE_ID",
         "LIVE_ACCOUNT_LEASE_TTL_SECONDS",
-        "lease heartbeat refresh is not implemented",
+        "LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS",
+        "effective heartbeat interval",
         "`/api/status` exposes operational metadata",
     ]:
         assert required in content

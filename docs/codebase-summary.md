@@ -127,6 +127,8 @@ Live quota reservation is skipped for dry-run tasks. Before reserving quota for 
 
 `WorkerController` passes `node_id` and `LIVE_ACCOUNT_LEASE_TTL_SECONDS` into `crud.claim_next_pending_task(...)`. CRUD scans at most 500 ready pending tasks ordered by priority and creation time. Live mutating non-dry-run candidates must acquire or reclaim a row in `live_account_lease` before task claim; candidates blocked by another active lease are skipped. Same-account dry-run tasks and read-only tasks are not leased or blocked by the lease. If a claim race is lost after lease acquisition, the lease is released.
 
+While a live mutating task is processing, `WorkerController` refreshes the matching account/task/node lease every `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` using `crud.refresh_live_account_lease(...)`. The effective heartbeat interval is clamped to at most half of `LIVE_ACCOUNT_LEASE_TTL_SECONDS` so misconfiguration cannot schedule the first heartbeat after lease expiry. Refresh updates `heartbeat_at` and extends `expires_at` only for the active matching lease; mismatched or expired leases are not refreshed and fail closed.
+
 `WorkerController` still maintains process-local `_active_live_account_ids` around async processing for telemetry/defense-in-depth and exposes it through `/api/status`, but the SQLite lease is now the cross-worker same-account live guard for workers sharing one SQLite DB.
 
 The worker now waits for `FBClient.has_fresh_session` before claiming pending tasks. Stale-only sockets do not trigger queued work and therefore do not immediately fail tasks because an old browser session remained registered.
@@ -163,12 +165,10 @@ Approval rejects malformed task payload JSON with `400` and writes an `APPROVE_T
 | `account_id` | Primary key and account scope for one active live mutating task |
 | `task_id` | Task that acquired the lease; release must match this task |
 | `node_id` | Worker identity for visibility and release ownership check |
-| `acquired_at`, `heartbeat_at` | Acquisition metadata; heartbeat refresh is not yet implemented |
+| `acquired_at`, `heartbeat_at` | Acquisition and latest refresh metadata |
 | `expires_at` | Crash-recovery expiry; active list returns rows with `expires_at > now` |
 
-`crud.acquire_live_account_lease(account_id, task_id, node_id, ttl_seconds)` inserts or replaces only expired same-account leases. `ttl_seconds` is clamped to `60`-`3600`; default config is `LIVE_ACCOUNT_LEASE_TTL_SECONDS=900`. `crud.release_live_account_lease(account_id, task_id, node_id)` deletes only the matching account/task/node lease. `crud.list_active_live_account_leases()` powers read-only `/api/status` visibility.
-
-Residual caveat: no lease heartbeat refresh exists yet. Keep live tasks within the TTL, or prioritize heartbeat refresh before long live workflows.
+`crud.acquire_live_account_lease(account_id, task_id, node_id, ttl_seconds)` inserts or replaces only expired same-account leases. `ttl_seconds` is clamped to `60`-`3600`; default config is `LIVE_ACCOUNT_LEASE_TTL_SECONDS=900`. `crud.refresh_live_account_lease(account_id, task_id, node_id, ttl_seconds)` extends only the matching active lease. `crud.release_live_account_lease(account_id, task_id, node_id)` deletes only the matching account/task/node lease. `crud.list_active_live_account_leases()` powers read-only `/api/status` visibility.
 
 ## Extension DOM-Action Guard
 
@@ -211,6 +211,7 @@ Verified in `agent/config.py`:
 | `MAX_CONCURRENT_TASKS` | `1` | Worker concurrency limit |
 | `FBKIT_NODE_ID` | `hostname:pid` | Optional worker identity. Must be unique per worker process when multiple workers share one SQLite DB. |
 | `LIVE_ACCOUNT_LEASE_TTL_SECONDS` | `900` | Live account lease TTL for live mutating non-dry-run tasks; clamped to `60`-`3600` seconds |
+| `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` | `60` | Refresh interval for matching live account leases while live mutating tasks are processing; clamped to `5`-`300` seconds |
 | `LIVE_ACTIONS_ENABLED` | `false` | Global switch for real mutating Facebook actions |
 | `DRY_RUN_DEFAULT` | `true` | Default dry-run value when live actions are allowed and no explicit flag is provided |
 | `APPROVAL_REQUIRED` | `true` | Requires payload approval before live mutation |
@@ -227,10 +228,11 @@ The dashboard is a Vite React app in `dashboard/`.
 
 | Verified file | Behavior |
 |---|---|
-| `dashboard/package.json` | Scripts: `dev`, `build`, `lint`, `preview`; dependencies include React 19, React Router 7, Vite 8, Tailwind 4, lucide-react |
+| `dashboard/package.json` | Scripts: `dev`, `build`, `lint`, `test`, `preview`; runtime deps include React 19, React Router 7, and lucide-react; dev deps include Vite 8, Tailwind 4, Vitest, jsdom, and Testing Library for dashboard-local hook tests |
 | `dashboard/vite.config.ts` | Dev server port `5173`; routes ZooPost Cloud prefixes (`/api/channels`, `/api/content-items`, `/api/media-assets`, `/api/publish-jobs`, `/api/live-arms`, `/api/dashboard`, `/api/agent-installations`) and `/agent-gateway` to `127.0.0.1:8200`; keeps FBKit fallback `/api`, `/health`, and `/ws` on `127.0.0.1:8100`; supports server-side-only `ZOOPOST_CLOUD_DEV_BEARER_TOKEN`; Vitest uses `jsdom` via the local Vite config |
 | `dashboard/src/App.tsx` | Routes: `/`, `/accounts`, `/tasks`, `/seeding`, `/spy`, `/logs` |
 | `dashboard/src/pages/DashboardPage.tsx` | Polls status/task/account/seeding/spy APIs and renders live event feed from dashboard WebSocket |
+| `dashboard/src/api/useWebSocket.test.ts` | Hook-level regression coverage for dashboard WebSocket reconnect, dual-consumer isolation, and unmount cleanup behavior with mocked `WebSocket` and fake timers |
 
 Dashboard session types include `profile_id`, `profile_name`, `last_seen_age_s`, `stale`, and `health`. `SafetyGateStatus` counts only fresh non-stale extension sessions as connected/logged in, so stale sessions no longer make the dashboard look live-ready.
 
@@ -277,7 +279,7 @@ Do not use `POST /tasks/{task_id}/approve` as part of safe cleanup or dry-run va
 
 Latest reported validation for Phase 4 distributed worker readiness: `pytest tests\unit\test_account_queue_quota.py -q` passed with `22 passed in 4.80s`; `pytest tests\unit\test_safety_gate.py tests\unit\test_live_arming.py tests\unit\test_account_queue_quota.py -q` passed with `95 passed in 15.93s`; `pytest tests\unit -q` passed with `260 passed in 21.20s`; `python -m compileall agent` passed; `node --check extension\background.js` passed; dashboard `npm run build` passed. Final code review approved docs sync with no blockers.
 
-Phase 4 is minimal readiness only. It does not add distributed orchestration, node assignment, queue federation, remote control, or live action enablement. Residual risks: no lease heartbeat refresh for long live workflows; `/api/status` exposes operational IDs/session metadata, so keep API local or enable API auth before non-local exposure; add a future multi-process SQLite contention integration test.
+Phase 4 is minimal readiness only. It does not add distributed orchestration, node assignment, queue federation, remote control, or live action enablement. Residual risks: `/api/status` exposes operational IDs/session metadata, so keep API local or enable API auth before non-local exposure; add a future multi-process SQLite contention integration test.
 
 ## Rollout Gates
 

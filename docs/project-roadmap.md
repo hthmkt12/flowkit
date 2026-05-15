@@ -52,14 +52,14 @@ FBKit has a working local-first architecture: FastAPI agent, SQLite task queue, 
 - Document every confirmed change to Safety Gate behavior in [Codebase Summary](./codebase-summary.md).
 - Maintain the Phase 4 SQLite live account lease before relying on multiple workers sharing one DB; process-local `_active_live_account_ids` is only telemetry/defense-in-depth.
 - Treat stale extension sessions as offline for routing/readiness; do not count stale sockets as live-ready in status UI.
-- Keep live workflows within `LIVE_ACCOUNT_LEASE_TTL_SECONDS` until heartbeat refresh is implemented.
+- Keep `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` shorter than `LIVE_ACCOUNT_LEASE_TTL_SECONDS` for long live workflows; the worker clamps the effective interval to at most half of TTL.
 - Keep `/api/status` local or enable API auth before non-local exposure because it includes operational IDs/session metadata.
 
 ## Phase 4 Completion Evidence
 
 - DB-backed live account leases are implemented for live mutating non-dry-run tasks; dry-run/read-only tasks remain lease-exempt.
 - Worker exposes read-only `node_id`, `active_live_account_ids`, and `live_account_leases` under `/api/status`.
-- New config: `FBKIT_NODE_ID` optional, default `hostname:pid`; `LIVE_ACCOUNT_LEASE_TTL_SECONDS` default `900`, clamped `60`-`3600`.
+- New config: `FBKIT_NODE_ID` optional, default `hostname:pid`; `LIVE_ACCOUNT_LEASE_TTL_SECONDS` default `900`, clamped `60`-`3600`; `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` default `60`, clamped `5`-`300`.
 - Safety defaults unchanged: no live actions enabled by default; Safety Gate, live arm, API/WS auth, exact `fb_uid`, extension guard, and quota checks remain intact.
 - Verification: `pytest tests\unit\test_account_queue_quota.py -q` passed with `22 passed in 4.80s`; targeted safety/live/quota suite passed with `95 passed in 15.93s`; final full unit suite passed with `260 passed in 21.20s`; `python -m compileall agent`, `node --check extension\background.js`, and dashboard `npm run build` passed.
 - Final code review approved docs sync with no blockers.

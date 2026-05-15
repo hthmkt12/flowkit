@@ -129,6 +129,7 @@ FBKit centralizes mutation safety in `agent/services/safety_gate.py`.
 | `WS_AUTH_ENABLED` | follows `API_AUTH_ENABLED` | Must be `true` before creating live arms or approving live tasks |
 | `FBKIT_NODE_ID` | `hostname:pid` | Optional worker identity for lease/status visibility; must be unique per worker process sharing one DB |
 | `LIVE_ACCOUNT_LEASE_TTL_SECONDS` | `900` | Live account lease TTL for live mutating tasks; clamped to `60`-`3600` seconds |
+| `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` | `60` | Live account lease refresh interval while a live mutating task is processing; clamped to `5`-`300` seconds |
 
 Mutating task types include posting, messaging, liking, commenting, sharing, friend actions, group actions, page follow/unfollow, and video reup tasks.
 
@@ -144,6 +145,7 @@ Additional protections:
 - live quota is reserved before live dispatch, skipped for dry-run tasks, and not reserved until live auth, arm, and extension guard readiness all pass
 - live quota reservation is date-scoped and idempotent for the same task retry; dry-run tasks remain exempt from live quota reservation
 - the worker uses a SQLite-backed live account lease to block same-account live mutating non-dry-run claims across workers sharing one DB; same-account dry-run/read-only work remains exempt
+- the worker refreshes the matching SQLite live account lease during processing so long live mutating tasks do not expire while still running
 - the worker still reports process-local `active_live_account_ids` as telemetry/defense-in-depth, but the DB lease is the cross-worker guard
 - `FBClient` requires exact `fb_uid` routing when a task targets a specific Facebook account
 - `FBClient` marks sessions stale by heartbeat age and prefers the freshest duplicate session for exact `fb_uid` routing

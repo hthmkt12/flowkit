@@ -119,7 +119,9 @@ The worker checks `FBClient.has_fresh_session` before claiming tasks. This keeps
 
 The SQLite MVP keeps queue selection in `agent/db/crud.py`. `claim_next_pending_task(...)` scans up to 500 ready pending tasks ordered by priority and creation time. Live mutating non-dry-run candidates require `acquire_live_account_lease(account_id, task_id, node_id, ttl_seconds)` before claim. If another active lease exists for that account, CRUD skips that live candidate and keeps scanning. Dry-run and read-only tasks are exempt from lease reads/writes.
 
-`live_account_lease.account_id` is the primary key. `task_id` and `node_id` are ownership metadata used on release; `expires_at` allows expired lease reclaim after worker crash. `FBKIT_NODE_ID` defaults to `hostname:pid` and should be unique per worker process when multiple workers share one SQLite DB. `LIVE_ACCOUNT_LEASE_TTL_SECONDS` defaults to `900` and is clamped to `60`-`3600`.
+`live_account_lease.account_id` is the primary key. `task_id` and `node_id` are ownership metadata used on release and heartbeat refresh; `expires_at` allows expired lease reclaim after worker crash. `FBKIT_NODE_ID` defaults to `hostname:pid` and should be unique per worker process when multiple workers share one SQLite DB. `LIVE_ACCOUNT_LEASE_TTL_SECONDS` defaults to `900` and is clamped to `60`-`3600`.
+
+While a live mutating task is processing, the worker refreshes the matching account/task/node lease every `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` seconds. The worker clamps the effective interval to at most half of `LIVE_ACCOUNT_LEASE_TTL_SECONDS`, updates `heartbeat_at`, and extends `expires_at` only if the lease still matches and is active; lost, expired, or mismatched leases are not refreshed.
 
 Worker `finally` releases the matching DB lease and clears process-local `_active_live_account_ids`. The process-local set remains status telemetry/defense-in-depth, not the cross-worker guard.
 
@@ -127,7 +129,7 @@ Quota reservation is live-only. `_check_rate_limit()` requires live auth readine
 
 Account visibility is exposed at `GET /api/accounts/{account_id}/queue-summary`. The response comes from `crud.get_account_queue_summary(account_id)` and includes task counts by status, quota usage/limits, stale-counter-aware `used` values, and blocked reasons. This endpoint is the current source for per-account queue/quota diagnostics.
 
-Limits: Phase 4 is distributed worker readiness only, not distributed orchestration/control plane. Lease heartbeat refresh is not implemented; keep live workflows within TTL or add heartbeat refresh before long live tasks. `/api/status` exposes operational IDs/session metadata, so keep API local or enable API auth before non-local exposure. A multi-process SQLite contention integration test remains future hardening.
+Limits: Phase 4 is distributed worker readiness only, not distributed orchestration/control plane. `/api/status` exposes operational IDs/session metadata, so keep API local or enable API auth before non-local exposure. A multi-process SQLite contention integration test remains future hardening.
 
 ## Deployment Shape
 

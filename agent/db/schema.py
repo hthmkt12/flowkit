@@ -114,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_task_scheduled ON task(scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_task_priority ON task(priority DESC);
 CREATE INDEX IF NOT EXISTS idx_task_status_scheduled_priority ON task(status, scheduled_at, priority DESC);
 CREATE INDEX IF NOT EXISTS idx_task_account_status ON task(account_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_zoopost_ref ON task(ref_id) WHERE ref_id LIKE 'zoopost:%';
 
 -- ─── FB Group ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS fb_group (
