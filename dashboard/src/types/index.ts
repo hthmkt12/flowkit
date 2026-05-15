@@ -202,6 +202,35 @@ export interface DashboardPerformance {
   }>
 }
 
+export interface AgentInstallation {
+  id: string
+  name: string
+  token_generation: number
+  status: string
+  version: string | null
+  credential_last_used_at: string | null
+  revoked_at: string | null
+}
+
+export interface AgentInstallationCreateResponse extends AgentInstallation {
+  registration_token: string
+  registration_token_expires_at: string
+}
+
+export interface AgentSessionReadiness {
+  id: string
+  agent_installation_id: string
+  status: string
+  session_generation: number
+  last_sequence: number
+  last_heartbeat_at: string | null
+  capability_names: string[]
+  connected_profile_count: number
+  has_facebook_profile: boolean
+  live_guard_enabled: boolean
+  dry_run_ready: boolean
+}
+
 export interface SocialChannel {
   id: string
   platform: string
