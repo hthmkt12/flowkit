@@ -19,11 +19,12 @@ import SeedingPage from './pages/SeedingPage'
 import SpyPage from './pages/SpyPage'
 import TasksPage from './pages/TasksPage'
 import LogsPage from './pages/LogsPage'
+import AutoPostFanpagePage from './pages/AutoPostFanpagePage'
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Tổng Quan', exact: true, element: <DashboardPage /> },
   { to: '/calendar', icon: CalendarDays, label: 'Lịch đăng bài', exact: false, element: <TasksPage /> },
-  { to: '/posts', icon: FileText, label: 'Bài viết', exact: false, element: <TasksPage /> },
+  { to: '/posts', icon: FileText, label: 'Bài viết', exact: false, element: <AutoPostFanpagePage /> },
   { to: '/accounts', icon: Users, label: 'Fanpage/Nhóm', exact: false, element: <AccountsPage /> },
   { to: '/library', icon: Library, label: 'Thư viện nội dung', exact: false, element: <TasksPage /> },
   { to: '/seeding', icon: Zap, label: 'Tự động seeding', exact: false, element: <SeedingPage /> },

@@ -201,3 +201,31 @@ export interface DashboardPerformance {
     target_id: string | null
   }>
 }
+
+export interface SocialChannel {
+  id: string
+  platform: string
+  channel_type: string
+  username: string | null
+  display_name: string
+  connection_status: string
+  safe_display_id?: string | null
+}
+
+export interface ContentPreviewResult {
+  body: string
+  syntax_mode: string
+  seed: string
+}
+
+export interface PublishJobTarget {
+  id: string
+  status: string
+}
+
+export interface PublishJob {
+  id: string
+  status: string
+  dry_run: boolean
+  targets: PublishJobTarget[]
+}
