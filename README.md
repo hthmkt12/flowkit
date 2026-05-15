@@ -116,6 +116,20 @@ Clean up smoke helper processes when you are done:
 
 The cleanup helper stops identifiable FBKit agent listeners on ports `8100` and `9222`, removes stale agent smoke PID files, and keeps Chrome open by default. Pass `-IncludeChrome` only if you started a dedicated smoke Chrome profile and want to close it too.
 
+### 4. Pair with ZooPost Cloud in dry-run mode
+
+Create an agent installation from ZooPost Cloud **Kết nối Agent**, then exchange the one-time registration token locally. The helper prints PowerShell environment commands only; it does not write credential files.
+
+```powershell
+$env:ZOOPOST_CLOUD_BEARER_TOKEN="<zoopost-user-jwt>"
+.\.venv\Scripts\python.exe scripts\zoopost-agent-env-setup.py `
+  --cloud-url http://127.0.0.1:8200 `
+  --installation-id <agent-installation-id> `
+  --registration-token <one-time-registration-token>
+```
+
+Run the printed commands in the same terminal that starts FBKit. Pairing remains dry-run-only: keep `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`, `API_AUTH_ENABLED=false`, and `WS_AUTH_ENABLED=false`. ZooPost Cloud must not receive cookies, browser profiles, Facebook credentials, or local media filesystem paths.
+
 ## Safety Gate Defaults
 
 FBKit centralizes mutation safety in `agent/services/safety_gate.py`.

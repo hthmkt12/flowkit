@@ -20,6 +20,7 @@ import SpyPage from './pages/SpyPage'
 import TasksPage from './pages/TasksPage'
 import LogsPage from './pages/LogsPage'
 import AutoPostFanpagePage from './pages/AutoPostFanpagePage'
+import AgentOnboardingPage from './pages/AgentOnboardingPage'
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Tổng Quan', exact: true, element: <DashboardPage /> },
@@ -31,7 +32,7 @@ const NAV = [
   { to: '/comments', icon: MessageCircle, label: 'Bình luận tự động', exact: false, element: <SeedingPage /> },
   { to: '/inbox', icon: Inbox, label: 'Messenger/Inbox', exact: false, element: <TasksPage /> },
   { to: '/reports', icon: BarChart3, label: 'Báo cáo', exact: false, element: <LogsPage /> },
-  { to: '/settings', icon: Settings, label: 'Cài đặt', exact: false, element: <SpyPage /> },
+  { to: '/settings', icon: Settings, label: 'Cài đặt', exact: false, element: <AgentOnboardingPage /> },
   { to: '/guide', icon: HelpCircle, label: 'Hướng dẫn', exact: false, element: <LogsPage /> },
 ]
 
