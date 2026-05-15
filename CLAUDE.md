@@ -4,6 +4,15 @@ FBKit is the active project in this repository. It is a local-first Facebook aut
 
 Base URL: `http://127.0.0.1:8100`
 
+## Marketing Context (Current)
+
+- Product name: **FBKit**
+- Tagline: **local-first Facebook automation assistant**
+- Positioning: safer local-first alternative to cloud social automation tools
+- Primary audience: small agencies, SMB marketers, founder-led teams
+- Main objective: near-term lead generation via product-led demos
+- Market status: no public website, pricing not published
+
 ## Critical Safety Rules
 
 1. Default to safe local mode: `LIVE_ACTIONS_ENABLED=false`, `DRY_RUN_DEFAULT=true`, `APPROVAL_REQUIRED=true`.

@@ -1,6 +1,6 @@
 # FBKit Project Roadmap
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
 ## Current Status
 
@@ -32,6 +32,17 @@ FBKit has a working local-first architecture: FastAPI agent, SQLite task queue, 
 5. Run optional operator manual 5-10 profile pilot using Phase 3/4 implementation if local resource/load evidence is still needed.
 6. Improve dashboard coverage only where it reflects verified API behavior, especially `/api/status` safety/lease state and `/api/accounts/{account_id}/queue-summary`.
 7. Keep docs synced with code after changes to endpoints, config, runtime behavior, or safety rules.
+
+## Near-Term Marketing Milestones (Lean Product-Led)
+
+| Milestone | Target window | Status | Notes |
+|---|---|---|---|
+| Publish core messaging baseline | Immediate | In progress | Use tagline + local-first safety positioning across docs and product surfaces |
+| Ship compact marketing overview doc | Immediate | Complete | `docs/marketing-overview.md` |
+| Prepare product-led demo flow | Near-term | In progress | Reuse dry-run safe flow as primary demo path |
+| Build lead capture entry point | Near-term | Planned | Public website is not live yet; use interim direct-contact/demo-request path |
+| Define first outbound competitor narrative | Near-term | Planned | Keep comparison tight vs Phantombuster/TexAu/Jarvee-like tools |
+| Publish initial pricing stance | Later near-term | Planned | Keep as TBD until packaging is validated through early demos |
 
 ## Safety Guardrails
 

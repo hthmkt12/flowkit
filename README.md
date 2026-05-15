@@ -2,6 +2,8 @@
 
 FBKit is a local-first Facebook automation assistant. It uses a Python FastAPI agent, a SQLite task queue, and a Chrome extension WebSocket bridge to run Facebook tasks through a logged-in browser session.
 
+**Positioning snapshot:** FBKit is a safer local-first alternative to cloud social automation tools for agencies and marketers that need control, account-level safety gating, and operational visibility.
+
 > **Safety default:** FBKit is dry-run first. Real mutating Facebook actions are disabled by default at both the server Safety Gate and the Chrome extension DOM-action layer.
 > Live mutating dispatch now also requires API auth, WebSocket auth, a scoped live arm, server approval, exact `fb_uid` routing, quota readiness, and an extension live guard that reports enabled.
 > Phase 3 multi-profile support is stale-aware: extension sessions report profile identity, guard state, current `fb_uid`, and heartbeat health; workers wait for a fresh extension session before claiming queued work, and exact `fb_uid` routing ignores stale duplicate sockets.
@@ -170,6 +172,7 @@ Before any live test:
 
 ## Current Docs
 
+- `docs/marketing-overview.md` — compact go-to-market strategy, channel priorities, messaging, and near-term actions.
 - `ARCHITECTURE.md` — current FBKit architecture.
 - `docs/project-overview-pdr.md` — verified product scope, requirements, and acceptance criteria.
 - `docs/codebase-summary.md` — verified Safety Gate behavior and runtime entry points.
