@@ -373,6 +373,7 @@ function ProgressPreview({ job, progress }: { job: PublishJob; progress: Publish
   const posted = counts?.posted ?? job.targets.filter(target => target.status === 'posted').length
   const dispatching = counts?.dispatching ?? 0
   const percent = progress?.percent_complete ?? (total === 0 ? 0 : Math.round((posted + failed) * 100 / total))
+  const safeEventMessage = safeProgressMessage(progress?.events[0]?.message ?? null)
   return (
     <section style={panelStyle()}>
       <SectionTitle title="Modal — Tiến Trình Dry-run" />
@@ -392,12 +393,65 @@ function ProgressPreview({ job, progress }: { job: PublishJob; progress: Publish
             <span style={chipStyle()}>Thất bại {failed}</span>
             <span style={chipStyle()}>Còn lại {Math.max(0, total - posted - failed)}</span>
           </div>
-          {progress?.events[0] && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{progress.events[0].message}</div>}
+          {safeEventMessage && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{safeEventMessage}</div>}
+          {progress && <TargetProgressDetails progress={progress} />}
           <div style={{ fontSize: '12px', color: 'var(--yellow)' }}>Đây là dry-run preview. Live posting vẫn cần Safety Gate và phê duyệt riêng.</div>
           <button type="button" disabled style={{ ...smallButtonStyle(), width: 'fit-content' }}>TẠM DỪNG</button>
         </div>
       </div>
     </section>
+  )
+}
+
+function safeExternalPostUrl(url: string | null) {
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    return ['http:', 'https:'].includes(parsed.protocol) ? url : null
+  } catch {
+    return null
+  }
+}
+
+function safeProgressMessage(message: string | null) {
+  if (!message) return null
+  const rawPatterns = [/traceback/i, /api \d{3}/i, /proxy/i, /stack/i]
+  if (rawPatterns.some(pattern => pattern.test(message))) return 'Không tải được chi tiết tiến trình an toàn.'
+  return message.length > 160 ? `${message.slice(0, 157)}...` : message
+}
+
+function safeTargetErrorMessage(message: string | null) {
+  if (!message) return null
+  const rawPatterns = [/traceback/i, /api \d{3}/i, /proxy/i, /stack/i]
+  if (rawPatterns.some(pattern => pattern.test(message))) return 'Không đăng được target này. Xem mã lỗi để xử lý.'
+  return message.length > 160 ? `${message.slice(0, 157)}...` : message
+}
+
+function TargetProgressDetails({ progress }: { progress: PublishJobProgress }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ fontSize: '12px', fontWeight: 850 }}>Chi tiết target</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {progress.targets.map(target => {
+          const safeUrl = safeExternalPostUrl(target.external_post_url)
+          const safeErrorMessage = safeTargetErrorMessage(target.error_message)
+          return (
+          <div key={target.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11px', background: 'var(--surface)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <strong>{target.id}</strong>
+              <span style={chipStyle()}>{target.status}</span>
+            </div>
+            <div style={{ color: 'var(--muted)' }}>{target.channel_id}</div>
+            <div>Số lần thử: {target.attempts}</div>
+            {safeUrl && <a href={safeUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', overflowWrap: 'anywhere' }}>{safeUrl}</a>}
+            {target.external_post_url && !safeUrl && <div style={{ color: 'var(--muted)' }}>URL không hợp lệ</div>}
+            {target.error_code && <div style={{ color: 'var(--red)', fontWeight: 800 }}>{target.error_code}</div>}
+            {safeErrorMessage && <div style={{ color: 'var(--red)', overflowWrap: 'anywhere' }}>{safeErrorMessage}</div>}
+          </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

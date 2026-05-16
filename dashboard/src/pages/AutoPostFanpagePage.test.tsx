@@ -171,6 +171,88 @@ describe('AutoPostFanpagePage', () => {
     })
   })
 
+  it('renders per-target progress details', async () => {
+    const detailedProgress = {
+      job_id: 'job-1',
+      status: 'failed',
+      counts: { total: 2, queued: 0, dispatching: 0, posted: 1, failed: 1, cancelled: 0 },
+      percent_complete: 100,
+      targets: [
+        { id: 'target-1', channel_id: 'channel-1', status: 'posted', attempts: 1, external_post_id: 'post-1', external_post_url: 'https://facebook.example/posts/1', error_code: null, error_message: null },
+        { id: 'target-2', channel_id: 'channel-2', status: 'failed', attempts: 2, external_post_id: null, external_post_url: null, error_code: 'POST_FAILED', error_message: 'Dry-run validation failed' },
+      ],
+      events: [{ id: 'event-failed', type: 'job.failed', severity: 'error', message: 'One target failed', target_id: 'target-2', data: {} }],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }, { id: 'target-2', channel_id: 'channel-2', status: 'queued' }] })
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(detailedProgress)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+    await act(async () => {
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+    })
+
+    await waitFor(() => expect(screen.getByText('Chi tiết target')).toBeTruthy())
+    expect(screen.getByText('target-1')).toBeTruthy()
+    expect(screen.getByText('channel-1')).toBeTruthy()
+    expect(screen.getByText('posted')).toBeTruthy()
+    expect(screen.getByText('Số lần thử: 1')).toBeTruthy()
+    expect(screen.getByText('https://facebook.example/posts/1')).toBeTruthy()
+    expect(screen.getByText('target-2')).toBeTruthy()
+    expect(screen.getByText('channel-2')).toBeTruthy()
+    expect(screen.getAllByText('failed').length).toBeGreaterThan(0)
+    expect(screen.getByText('Số lần thử: 2')).toBeTruthy()
+    expect(screen.getByText('POST_FAILED')).toBeTruthy()
+    expect(screen.getByText('Dry-run validation failed')).toBeTruthy()
+  })
+
+  it('renders unsafe target URLs and raw-looking errors safely', async () => {
+    const unsafeProgress = {
+      job_id: 'job-1',
+      status: 'failed',
+      counts: { total: 1, queued: 0, dispatching: 0, posted: 0, failed: 1, cancelled: 0 },
+      percent_complete: 100,
+      targets: [
+        { id: 'target-unsafe', channel_id: 'channel-1', status: 'failed', attempts: 1, external_post_id: null, external_post_url: 'javascript:alert(1)', error_code: 'PROXY_FAILURE', error_message: 'API 500: proxy stack trace leaked' },
+      ],
+      events: [{ id: 'event-failed', type: 'job.failed', severity: 'error', message: 'API 500: proxy stack trace leaked', target_id: 'target-unsafe', data: {} }],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-unsafe', channel_id: 'channel-1', status: 'queued' }] })
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(unsafeProgress)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+    await act(async () => {
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+    })
+
+    await waitFor(() => expect(screen.getByText('target-unsafe')).toBeTruthy())
+    expect(screen.getByText('URL không hợp lệ')).toBeTruthy()
+    expect(screen.queryByText('javascript:alert(1)')).toBeNull()
+    expect(screen.getByText('PROXY_FAILURE')).toBeTruthy()
+    expect(screen.getByText('Không đăng được target này. Xem mã lỗi để xử lý.')).toBeTruthy()
+    expect(screen.getByText('Không tải được chi tiết tiến trình an toàn.')).toBeTruthy()
+    expect(screen.queryByText('API 500: proxy stack trace leaked')).toBeNull()
+  })
+
   it('polls publish progress until a terminal status is reached', async () => {
     vi.useFakeTimers()
     const progressResponses = [
