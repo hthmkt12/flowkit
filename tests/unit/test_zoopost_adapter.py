@@ -250,6 +250,34 @@ async def test_cloud_live_intent_is_fanpage_only(db, channel_type):
         )
 
 
+@pytest.mark.parametrize("channel_type", ["profile", "group"])
+@pytest.mark.asyncio
+async def test_profile_and_group_dry_run_dispatches_are_allowed(db, channel_type):
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import handle_dispatch
+
+    await crud.create_account("Page A", fb_uid="page-1")
+
+    result = await handle_dispatch(
+        {
+            "dispatchId": f"dispatch-dry-run-{channel_type}",
+            "platform": "facebook",
+            "channelType": channel_type,
+            "platformTaskType": "facebook.post_text",
+            "expectedFbUid": "page-1",
+            "dryRun": True,
+            "content": {"body": "Dry-run non-fanpage dispatch"},
+        }
+    )
+
+    task = await crud.get_task(result["localTaskId"])
+    payload = json.loads(task["payload"])
+    assert task["task_type"] == "POST_TEXT"
+    assert payload["dryRun"] is True
+    assert payload["content"] == "Dry-run non-fanpage dispatch"
+    assert "zoopostLiveIntent" not in payload
+
+
 @pytest.mark.asyncio
 async def test_approved_zoopost_live_intent_still_requires_extension_guard(db, monkeypatch):
     from agent import config
