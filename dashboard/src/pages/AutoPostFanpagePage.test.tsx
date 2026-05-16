@@ -83,7 +83,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/content-items/content-1/preview?seed=channel-1&channel_id=channel-1') return jsonResponse({ content_id: 'content-1', channel_id: 'channel-1', body: 'Xin chào 😄', syntax_mode: 'zoopost', seed: 'channel-1', attachments: [], warnings: [] })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(jobProgressPayload('queued', 0, 'Publish job queued'))
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
@@ -116,7 +116,7 @@ describe('AutoPostFanpagePage', () => {
       calls.push({ url, init })
       if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
       if (url === '/api/media-assets') return jsonResponse([])
-      if (url === '/api/publish-jobs') return jsonResponse([historyJob])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([historyJob])
       if (url === '/api/publish-jobs/job-history/progress') return jsonResponse({
         job_id: 'job-history',
         status: 'failed',
@@ -131,6 +131,7 @@ describe('AutoPostFanpagePage', () => {
     render(<AutoPostFanpagePage />)
 
     expect(await screen.findByText('Lịch sử dry-run')).toBeTruthy()
+    expect(calls.some(call => call.url === '/api/publish-jobs?limit=5')).toBe(true)
     expect(screen.getByText('job-hist')).toBeTruthy()
     expect(screen.getByText('failed · 1 target')).toBeTruthy()
     await act(async () => {
@@ -152,7 +153,7 @@ describe('AutoPostFanpagePage', () => {
       calls.push({ url, init })
       if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
       if (url === '/api/media-assets') return jsonResponse([])
-      if (url === '/api/publish-jobs') return jsonResponse(historyJobs)
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse(historyJobs)
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
 
@@ -178,7 +179,7 @@ describe('AutoPostFanpagePage', () => {
       calls.push({ url, init })
       if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
       if (url === '/api/media-assets') return jsonResponse([])
-      if (url === '/api/publish-jobs') return jsonResponse(historyJobs)
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse(historyJobs)
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
 
@@ -285,7 +286,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/media-assets') return jsonResponse([])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }, { id: 'target-2', channel_id: 'channel-2', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(detailedProgress)
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
@@ -336,7 +337,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/media-assets') return jsonResponse([])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-null-safe', channel_id: 'channel-null-safe', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(detailedProgress)
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
@@ -374,7 +375,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/media-assets') return jsonResponse([])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-dispatching', channel_id: 'unknown-dispatching', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(detailedProgress)
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
@@ -413,7 +414,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/media-assets') return jsonResponse([])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-unsafe', channel_id: 'channel-1', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(unsafeProgress)
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
@@ -448,7 +449,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/media-assets') return jsonResponse([])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(progressResponses.shift() ?? jobProgressPayload('posted', 100, 'Dry-run target complete'))
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
@@ -511,7 +512,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/media-assets') return jsonResponse([])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(progressResponses.shift() ?? jobProgressPayload('posted', 100, 'Dry-run target complete'))
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
@@ -561,7 +562,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/media-assets') return jsonResponse([])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') {
         progressCallCount += 1
         if (progressCallCount === 2) return Promise.reject(new Error('temporary network error'))
@@ -622,7 +623,7 @@ describe('AutoPostFanpagePage', () => {
         jobCreateCount += 1
         return jsonResponse({ id: `job-${jobCreateCount}`, status: 'queued', dry_run: true, targets: [{ id: `target-${jobCreateCount}`, channel_id: 'channel-1', status: 'queued' }] })
       }
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       if (url === '/api/publish-jobs/job-1/progress') {
         jobOneProgressCount += 1
         return jobOneProgressCount === 1
@@ -684,7 +685,7 @@ describe('AutoPostFanpagePage', () => {
       if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
       if (url === '/api/content-items') return contentSave.pending
       if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
-      if (url === '/api/publish-jobs') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
 

@@ -128,7 +128,7 @@ export default function AutoPostFanpagePage() {
     const sequence = ++historyLoadSequence.current
     setHistoryLoading(true)
     try {
-      const jobs = await fetchAPI<PublishJob[]>('/api/publish-jobs')
+      const jobs = await fetchAPI<PublishJob[]>('/api/publish-jobs?limit=5')
       if (sequence === historyLoadSequence.current) setJobHistory(jobs.filter(item => item.dry_run).slice(0, 5))
     } catch {
       if (sequence === historyLoadSequence.current) setMessage('Không tải được lịch sử dry-run.')
