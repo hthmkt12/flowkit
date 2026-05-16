@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle, Clock, Image, Link, Play, RefreshCw, Search, Video, Wand2 } from 'lucide-react'
 import { fetchAPI, postAPI } from '../api/client'
-import type { ChannelSelectorItem, ChannelSelectorResponse, ContentItem, ContentPreviewResult, PublishJob, PublishJobProgress } from '../types'
+import type { ChannelSelectorItem, ChannelSelectorResponse, ContentItem, ContentPreviewResult, MediaAsset, PublishJob, PublishJobProgress } from '../types'
 
 const PLATFORM_COLOR: Record<string, string> = {
   facebook: '#2563eb',
@@ -25,7 +25,11 @@ const ATTACHMENT_MODES = [
 const DEFAULT_BODY = 'Xin chào [r]\n$SPIN=[Nội dung A | Nội dung B | Nội dung C]'
 const DEFAULT_TITLE = 'ZooPost dry-run'
 
-type SavedContentDraft = { id: string; title: string; body: string }
+type SavedContentDraft = { id: string; title: string; body: string; mediaAssetIds: string[] }
+
+function sameMediaAssets(left: string[], right: string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
 
 export default function AutoPostFanpagePage() {
   const [channels, setChannels] = useState<ChannelSelectorItem[]>([])
@@ -36,6 +40,10 @@ export default function AutoPostFanpagePage() {
   const savedContentRef = useRef<SavedContentDraft | null>(null)
   const saveSequence = useRef(0)
   const [preview, setPreview] = useState<ContentPreviewResult | null>(null)
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([])
+  const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([])
+  const [mediaUrl, setMediaUrl] = useState('')
+  const [mediaMimeType, setMediaMimeType] = useState('image/png')
   const [minDelay, setMinDelay] = useState(60)
   const [maxDelay, setMaxDelay] = useState(180)
   const [useSchedule, setUseSchedule] = useState(false)
@@ -55,15 +63,27 @@ export default function AutoPostFanpagePage() {
       const data = await fetchAPI<ChannelSelectorResponse>(`/api/channels/selector?${params.toString()}`)
       setChannels(data.items)
       setMessage(null)
-    } catch (error) {
+    } catch {
       setChannels([])
-      setMessage(error instanceof Error ? error.message : 'Không tải được danh sách kênh.')
+      setMessage('Không tải được danh sách kênh.')
     } finally {
       setLoading(false)
     }
   }, [query])
 
   useEffect(() => { loadChannels() }, [loadChannels])
+
+  const loadMediaAssets = useCallback(async () => {
+    try {
+      const data = await fetchAPI<MediaAsset[]>('/api/media-assets')
+      setMediaAssets(data)
+    } catch {
+      setMediaAssets([])
+      setMessage('Không tải được media assets.')
+    }
+  }, [])
+
+  useEffect(() => { loadMediaAssets() }, [loadMediaAssets])
 
   const filteredChannels = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -85,11 +105,11 @@ export default function AutoPostFanpagePage() {
 
   async function saveContent() {
     const cached = savedContentRef.current
-    if (cached?.title === title && cached.body === body) return cached.id
+    if (cached?.title === title && cached.body === body && sameMediaAssets(cached.mediaAssetIds, selectedMediaIds)) return cached.id
 
-    const draft = { title, body }
+    const draft = { title, body, mediaAssetIds: [...selectedMediaIds] }
     const sequence = ++saveSequence.current
-    const content = await postAPI<ContentItem>('/api/content-items', { ...draft, syntax_mode: 'zoopost', status: 'draft' })
+    const content = await postAPI<ContentItem>('/api/content-items', { title: draft.title, body: draft.body, media_asset_ids: draft.mediaAssetIds, syntax_mode: 'zoopost', status: 'draft' })
     if (sequence === saveSequence.current) {
       const nextSaved = { id: content.id, ...draft }
       savedContentRef.current = nextSaved
@@ -112,6 +132,32 @@ export default function AutoPostFanpagePage() {
     setPreview(null)
   }
 
+  function toggleMediaAsset(mediaId: string) {
+    saveSequence.current += 1
+    savedContentRef.current = null
+    setSelectedMediaIds(prev => prev.includes(mediaId) ? prev.filter(id => id !== mediaId) : [...prev, mediaId])
+    setPreview(null)
+  }
+
+  async function createMediaAsset() {
+    if (!mediaUrl.trim()) {
+      setMessage('Nhập URL media trước khi thêm attachment.')
+      return
+    }
+    try {
+      const created = await postAPI<MediaAsset>('/api/media-assets', { type: activeAttachment === 'video' ? 'video' : 'image', source: 'external_url', url: mediaUrl.trim(), mime_type: mediaMimeType.trim() || null })
+      setMediaAssets(prev => [created, ...prev])
+      setSelectedMediaIds(prev => prev.includes(created.id) ? prev : [...prev, created.id])
+      setMediaUrl('')
+      setMessage('Đã thêm media asset vào bản nháp.')
+      saveSequence.current += 1
+      savedContentRef.current = null
+      setPreview(null)
+    } catch {
+      setMessage('Không tạo được media asset.')
+    }
+  }
+
   async function renderPreview() {
     const draft = { title, body }
     try {
@@ -123,9 +169,9 @@ export default function AutoPostFanpagePage() {
       if (savedContentRef.current?.title !== draft.title || savedContentRef.current.body !== draft.body) return
       setPreview(result)
       setMessage(null)
-    } catch (error) {
+    } catch {
       setPreview(null)
-      setMessage(error instanceof Error ? error.message : 'Không tạo được preview.')
+      setMessage('Không tạo được preview.')
     }
   }
 
@@ -159,8 +205,8 @@ export default function AutoPostFanpagePage() {
       const currentProgress = await fetchAPI<PublishJobProgress>(`/api/publish-jobs/${created.id}/progress`)
       setProgress(currentProgress)
       setMessage(`Đã tạo dry-run job ${created.id.slice(0, 8)} cho ${created.targets.length} kênh.`)
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Không tạo được dry-run job.')
+    } catch {
+      setMessage('Không tạo được dry-run job.')
     } finally {
       setSubmitting(false)
     }
@@ -210,6 +256,20 @@ export default function AutoPostFanpagePage() {
                 </button>
               )
             })}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(110px, 0.35fr)', gap: '8px' }}>
+            <input value={mediaUrl} onChange={event => setMediaUrl(event.target.value)} placeholder="https://example.com/media.png" style={inputStyle()} />
+            <input value={mediaMimeType} onChange={event => setMediaMimeType(event.target.value)} placeholder="image/png" style={inputStyle()} />
+          </div>
+          <button type="button" onClick={createMediaAsset} style={{ ...smallButtonStyle(), width: 'fit-content' }}>THÊM MEDIA ASSET</button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {mediaAssets.map(asset => (
+              <label key={asset.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--muted)' }}>
+                <input type="checkbox" checked={selectedMediaIds.includes(asset.id)} onChange={() => toggleMediaAsset(asset.id)} />
+                <span>{asset.type.toUpperCase()} · {asset.url ?? asset.local_ref ?? asset.id.slice(0, 8)}</span>
+              </label>
+            ))}
+            {mediaAssets.length === 0 && <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Chưa có media asset. Thêm URL để attach vào content.</div>}
           </div>
         </section>
 
@@ -264,7 +324,7 @@ export default function AutoPostFanpagePage() {
 
       <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', background: 'rgba(255,255,255,0.94)', border: '1px solid var(--border)', borderRadius: '14px', padding: '12px 14px', boxShadow: '0 10px 30px rgba(15,23,42,0.12)' }}>
         <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-          Thời gian: {safeMinDelay}-{safeMaxDelay}s · Định dạng: {activeAttachment} · Fanpage: {selected.length} · Seeding: tắt · Ước tính: dry-run
+          Thời gian: {safeMinDelay}-{safeMaxDelay}s · Định dạng: {activeAttachment} · Media: {selectedMediaIds.length} · Fanpage: {selected.length} · Seeding: tắt · Ước tính: dry-run
         </div>
         <button type="button" onClick={startDryRunJob} disabled={submitting} style={buttonStyle('#16a34a')}>
           <Play size={15} /> {submitting ? 'ĐANG TẠO...' : 'BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'}

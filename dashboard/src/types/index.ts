@@ -253,6 +253,18 @@ export interface ChannelSelectorResponse {
   limit: number
 }
 
+export interface MediaAsset {
+  id: string
+  tenant_id?: string
+  type: string
+  source: string
+  url: string | null
+  local_ref: string | null
+  size_bytes: number | null
+  mime_type: string | null
+  metadata?: Record<string, unknown>
+}
+
 export interface ContentPreviewResult {
   content_id?: string
   channel_id?: string | null

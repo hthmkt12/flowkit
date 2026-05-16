@@ -43,6 +43,8 @@ describe('AutoPostFanpagePage', () => {
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
       calls.push({ url, init })
       if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets' && init?.method === 'POST') return jsonResponse({ id: 'media-new', type: 'image', source: 'external_url', url: 'https://example.com/new.png', local_ref: null, size_bytes: null, mime_type: 'image/jpeg', metadata: {} })
+      if (url === '/api/media-assets') return jsonResponse([{ id: 'media-1', type: 'image', source: 'external_url', url: 'https://example.com/a.png', local_ref: null, size_bytes: 123, mime_type: 'image/png', metadata: {} }])
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/content-items/content-1/preview?seed=channel-1&channel_id=channel-1') return jsonResponse({ content_id: 'content-1', channel_id: 'channel-1', body: 'Xin chào 😄', syntax_mode: 'zoopost', seed: 'channel-1', attachments: [], warnings: [] })
       if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
@@ -100,6 +102,57 @@ describe('AutoPostFanpagePage', () => {
       channel_ids: ['channel-1'],
       dry_run: true,
       delay_policy: { min_delay_seconds: 60, max_delay_seconds: 180 },
+    })
+  })
+
+  it('includes selected media assets when saving content', async () => {
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    expect(await screen.findByText(/https:\/\/example.com\/a.png/)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/https:\/\/example.com\/a.png/))
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+    await act(async () => {
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+    })
+
+    await waitFor(() => expect(screen.getByText(/Đã tạo dry-run job/)).toBeTruthy())
+    const contentCall = calls.find(call => call.url === '/api/content-items')
+    expect(JSON.parse(String(contentCall?.init?.body))).toMatchObject({
+      media_asset_ids: ['media-1'],
+    })
+  })
+
+  it('creates a media asset from URL fields and selects it for content save', async () => {
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText('https://example.com/media.png'), { target: { value: 'https://example.com/new.png' } })
+    fireEvent.change(screen.getByPlaceholderText('image/png'), { target: { value: 'image/jpeg' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('THÊM MEDIA ASSET'))
+    })
+
+    await waitFor(() => expect(screen.getByText(/Đã thêm media asset/)).toBeTruthy())
+    expect(screen.getByLabelText(/https:\/\/example.com\/new.png/)).toBeTruthy()
+
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+    await act(async () => {
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+    })
+
+    await waitFor(() => expect(screen.getByText(/Đã tạo dry-run job/)).toBeTruthy())
+    const mediaCreateCall = calls.find(call => call.url === '/api/media-assets' && call.init?.method === 'POST')
+    expect(JSON.parse(String(mediaCreateCall?.init?.body))).toMatchObject({
+      type: 'image',
+      source: 'external_url',
+      url: 'https://example.com/new.png',
+      mime_type: 'image/jpeg',
+    })
+    const contentCall = calls.find(call => call.url === '/api/content-items')
+    expect(JSON.parse(String(contentCall?.init?.body))).toMatchObject({
+      media_asset_ids: ['media-new'],
     })
   })
 
