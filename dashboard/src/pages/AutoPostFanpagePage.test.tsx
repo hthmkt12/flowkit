@@ -142,6 +142,34 @@ describe('AutoPostFanpagePage', () => {
     expect(calls.some(call => call.url === '/api/publish-jobs/job-history/progress')).toBe(true)
   })
 
+  it('filters dry-run history by status', async () => {
+    const historyJobs = [
+      { id: 'job-queued', status: 'queued', dry_run: true, targets: [{ id: 'target-queued', channel_id: 'channel-1', status: 'queued' }] },
+      { id: 'job-failed', status: 'failed', dry_run: true, targets: [{ id: 'target-failed', channel_id: 'channel-1', status: 'failed' }] },
+      { id: 'job-posted', status: 'posted', dry_run: true, targets: [{ id: 'target-posted', channel_id: 'channel-1', status: 'posted' }] },
+    ]
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/publish-jobs') return jsonResponse(historyJobs)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('job-queu')).toBeTruthy()
+    expect(screen.getByText('job-fail')).toBeTruthy()
+    expect(screen.getByText('job-post')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Lọc lịch sử dry-run theo trạng thái'), { target: { value: 'failed' } })
+
+    expect(screen.queryByText('job-queu')).toBeNull()
+    expect(screen.getByText('job-fail')).toBeTruthy()
+    expect(screen.queryByText('job-post')).toBeNull()
+    expect(screen.getByText('failed · 1 target')).toBeTruthy()
+  })
+
   it('creates a dry-run job and renders backend progress', async () => {
     render(<AutoPostFanpagePage />)
 

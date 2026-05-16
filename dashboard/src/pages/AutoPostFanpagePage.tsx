@@ -395,21 +395,38 @@ export default function AutoPostFanpagePage() {
 }
 
 function JobHistoryPanel({ jobs, loading, onRefresh, onOpen }: { jobs: PublishJob[]; loading: boolean; onRefresh: () => void; onOpen: (job: PublishJob) => void }) {
+  const [statusFilter, setStatusFilter] = useState('all')
+  const filteredJobs = statusFilter === 'all' ? jobs : jobs.filter(item => item.status === statusFilter)
   return (
     <section style={panelStyle()}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
         <SectionTitle title="Lịch sử dry-run" />
-        <button type="button" onClick={onRefresh} style={smallButtonStyle()}><RefreshCw size={13} /> TẢI LẠI</button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ ...labelStyle(), display: 'flex', gap: '6px', alignItems: 'center' }}>
+            Lọc lịch sử dry-run theo trạng thái
+            <select aria-label="Lọc lịch sử dry-run theo trạng thái" value={statusFilter} onChange={event => setStatusFilter(event.target.value)} style={{ ...inputStyle(), width: '140px', padding: '7px 9px' }}>
+              <option value="all">Tất cả</option>
+              <option value="queued">Queued</option>
+              <option value="dispatching">Dispatching</option>
+              <option value="posted">Posted</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </label>
+          <button type="button" onClick={onRefresh} style={smallButtonStyle()}><RefreshCw size={13} /> TẢI LẠI</button>
+        </div>
       </div>
       {loading && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Đang tải lịch sử dry-run...</div>}
       {!loading && jobs.length === 0 && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Chưa có dry-run job gần đây.</div>}
-      {!loading && jobs.length > 0 && (
+      {!loading && jobs.length > 0 && filteredJobs.length === 0 && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Không có dry-run job ở trạng thái này.</div>}
+      {!loading && filteredJobs.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {jobs.map(item => (
+          {filteredJobs.map(item => (
             <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '10px', display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap', background: 'var(--surface)' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <strong style={{ fontSize: '12px' }}>{item.id.slice(0, 8)}</strong>
-                <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{item.status} · {item.targets.length} target</span>
+                <span style={progressStatusChipStyle(item.status)}>{item.status} · {item.targets.length} target</span>
               </div>
               <button type="button" onClick={() => onOpen(item)} style={smallButtonStyle()}>MỞ TIẾN TRÌNH</button>
             </div>
