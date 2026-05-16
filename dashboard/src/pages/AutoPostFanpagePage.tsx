@@ -45,6 +45,7 @@ export default function AutoPostFanpagePage() {
   const [title, setTitle] = useState(DEFAULT_TITLE)
   const savedContentRef = useRef<SavedContentDraft | null>(null)
   const activeJobIdRef = useRef<string | null>(null)
+  const historyLoadSequence = useRef(0)
   const saveSequence = useRef(0)
   const [preview, setPreview] = useState<ContentPreviewResult | null>(null)
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([])
@@ -62,6 +63,8 @@ export default function AutoPostFanpagePage() {
   const [job, setJob] = useState<PublishJob | null>(null)
   const [progress, setProgress] = useState<PublishJobProgress | null>(null)
   const [progressPollTick, setProgressPollTick] = useState(0)
+  const [jobHistory, setJobHistory] = useState<PublishJob[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   const loadChannels = useCallback(async () => {
     setLoading(true)
@@ -120,6 +123,21 @@ export default function AutoPostFanpagePage() {
       return null
     }
   }, [])
+
+  const loadJobHistory = useCallback(async () => {
+    const sequence = ++historyLoadSequence.current
+    setHistoryLoading(true)
+    try {
+      const jobs = await fetchAPI<PublishJob[]>('/api/publish-jobs')
+      if (sequence === historyLoadSequence.current) setJobHistory(jobs.filter(item => item.dry_run).slice(0, 5))
+    } catch {
+      if (sequence === historyLoadSequence.current) setMessage('Không tải được lịch sử dry-run.')
+    } finally {
+      if (sequence === historyLoadSequence.current) setHistoryLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadJobHistory() }, [loadJobHistory])
 
   useEffect(() => {
     if (!job || isPublishTerminalStatus(progress?.status ?? job.status)) return
@@ -233,12 +251,21 @@ export default function AutoPostFanpagePage() {
       activeJobIdRef.current = created.id
       setJob(created)
       await refreshProgress(created.id)
+      await loadJobHistory()
       setMessage(`Đã tạo dry-run job ${created.id.slice(0, 8)} cho ${created.targets.length} kênh.`)
     } catch {
       setMessage('Không tạo được dry-run job.')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function openHistoryJob(nextJob: PublishJob) {
+    activeJobIdRef.current = nextJob.id
+    setJob(nextJob)
+    setProgress(null)
+    setProgressPollTick(0)
+    await refreshProgress(nextJob.id)
   }
 
   function toggleChannel(channelId: string) {
@@ -360,8 +387,36 @@ export default function AutoPostFanpagePage() {
         </button>
       </div>
 
+      <JobHistoryPanel jobs={jobHistory} loading={historyLoading} onRefresh={loadJobHistory} onOpen={openHistoryJob} />
+
       {job && <ProgressPreview job={job} progress={progress} channels={channels} />}
     </div>
+  )
+}
+
+function JobHistoryPanel({ jobs, loading, onRefresh, onOpen }: { jobs: PublishJob[]; loading: boolean; onRefresh: () => void; onOpen: (job: PublishJob) => void }) {
+  return (
+    <section style={panelStyle()}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <SectionTitle title="Lịch sử dry-run" />
+        <button type="button" onClick={onRefresh} style={smallButtonStyle()}><RefreshCw size={13} /> TẢI LẠI</button>
+      </div>
+      {loading && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Đang tải lịch sử dry-run...</div>}
+      {!loading && jobs.length === 0 && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Chưa có dry-run job gần đây.</div>}
+      {!loading && jobs.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {jobs.map(item => (
+            <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '10px', display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap', background: 'var(--surface)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <strong style={{ fontSize: '12px' }}>{item.id.slice(0, 8)}</strong>
+                <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{item.status} · {item.targets.length} target</span>
+              </div>
+              <button type="button" onClick={() => onOpen(item)} style={smallButtonStyle()}>MỞ TIẾN TRÌNH</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
