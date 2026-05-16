@@ -144,6 +144,22 @@ describe('AutoPostFanpagePage', () => {
     expect(calls.some(call => call.url === '/api/publish-jobs/job-history/progress')).toBe(true)
   })
 
+  it('shows a fallback for malformed dry-run history created time', async () => {
+    const historyJob = { id: 'job-malformed-time', status: 'queued', dry_run: true, created_at: 'not-a-date', targets: [{ id: 'target-time', channel_id: 'channel-1', status: 'queued' }] }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([historyJob])
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('job-malf')).toBeTruthy()
+    expect(screen.getByText('Thời gian không hợp lệ')).toBeTruthy()
+  })
+
   it('filters dry-run history by status', async () => {
     const historyJobs = [
       { id: 'job-queued', status: 'queued', dry_run: true, created_at: '2026-05-16T10:30:00Z', targets: [{ id: 'target-queued', channel_id: 'channel-1', status: 'queued' }] },
