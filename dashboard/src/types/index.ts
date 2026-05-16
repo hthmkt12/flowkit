@@ -301,6 +301,7 @@ export interface PublishJob {
   id: string
   status: string
   dry_run: boolean
+  created_at: string
   targets: PublishJobTarget[]
 }
 

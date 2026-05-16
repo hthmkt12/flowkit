@@ -426,6 +426,7 @@ function JobHistoryPanel({ jobs, loading, onRefresh, onOpen }: { jobs: PublishJo
             <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '10px', display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap', background: 'var(--surface)' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <strong style={{ fontSize: '12px' }}>{item.id.slice(0, 8)}</strong>
+                <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{formatHistoryCreatedAt(item.created_at)}</span>
                 <span style={progressStatusChipStyle(item.status)}>{item.status} · {item.targets.length} target</span>
               </div>
               <button type="button" onClick={() => onOpen(item)} style={smallButtonStyle()}>MỞ TIẾN TRÌNH</button>
@@ -435,6 +436,13 @@ function JobHistoryPanel({ jobs, loading, onRefresh, onOpen }: { jobs: PublishJo
       )}
     </section>
   )
+}
+
+function formatHistoryCreatedAt(value: string) {
+  const createdAt = new Date(value)
+  if (!Number.isFinite(createdAt.getTime())) return 'Thời gian không hợp lệ'
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${pad(createdAt.getUTCDate())}/${pad(createdAt.getUTCMonth() + 1)}/${createdAt.getUTCFullYear()}, ${pad(createdAt.getUTCHours())}:${pad(createdAt.getUTCMinutes())}`
 }
 
 function ProgressPreview({ job, progress, channels }: { job: PublishJob; progress: PublishJobProgress | null; channels: ChannelSelectorItem[] }) {
