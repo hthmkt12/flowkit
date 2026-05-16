@@ -27,12 +27,34 @@ function jsonResponse(body: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response)
 }
 
-function deferredResponse(body: unknown) {
-  let resolve!: () => void
+function deferredResponse(body?: unknown) {
+  let resolve!: (nextBody?: unknown) => void
   const pending = new Promise<Response>(promiseResolve => {
-    resolve = () => promiseResolve({ ok: true, json: () => Promise.resolve(body) } as Response)
+    resolve = nextBody => promiseResolve({ ok: true, json: () => Promise.resolve(nextBody ?? body) } as Response)
   })
   return { pending, resolve }
+}
+
+function progressPayload(jobId: string, status: string, percentComplete: number, message: string) {
+  return {
+    job_id: jobId,
+    status,
+    counts: {
+      total: 1,
+      queued: status === 'queued' ? 1 : 0,
+      dispatching: status === 'dispatching' ? 1 : 0,
+      posted: status === 'posted' ? 1 : 0,
+      failed: status === 'failed' ? 1 : 0,
+      cancelled: status === 'cancelled' ? 1 : 0,
+    },
+    percent_complete: percentComplete,
+    targets: [{ id: 'target-1', channel_id: 'channel-1', status, attempts: 0, external_post_id: null, external_post_url: null, error_code: null, error_message: null }],
+    events: [{ id: `event-${jobId}-${status}`, type: `job.${status}`, severity: 'info', message, target_id: null, data: {} }],
+  }
+}
+
+function jobProgressPayload(status: string, percentComplete: number, message: string) {
+  return progressPayload('job-1', status, percentComplete, message)
 }
 
 describe('AutoPostFanpagePage', () => {
@@ -48,14 +70,7 @@ describe('AutoPostFanpagePage', () => {
       if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
       if (url === '/api/content-items/content-1/preview?seed=channel-1&channel_id=channel-1') return jsonResponse({ content_id: 'content-1', channel_id: 'channel-1', body: 'Xin chào 😄', syntax_mode: 'zoopost', seed: 'channel-1', attachments: [], warnings: [] })
       if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
-      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse({
-        job_id: 'job-1',
-        status: 'queued',
-        counts: { total: 1, queued: 1, dispatching: 0, posted: 0, failed: 0, cancelled: 0 },
-        percent_complete: 0,
-        targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued', attempts: 0, external_post_id: null, external_post_url: null, error_code: null, error_message: null }],
-        events: [{ id: 'event-1', type: 'job.queued', severity: 'info', message: 'Publish job queued', target_id: null, data: {} }],
-      })
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(jobProgressPayload('queued', 0, 'Publish job queued'))
       return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
     }))
   })
@@ -154,6 +169,244 @@ describe('AutoPostFanpagePage', () => {
     expect(JSON.parse(String(contentCall?.init?.body))).toMatchObject({
       media_asset_ids: ['media-new'],
     })
+  })
+
+  it('polls publish progress until a terminal status is reached', async () => {
+    vi.useFakeTimers()
+    const progressResponses = [
+      jobProgressPayload('queued', 0, 'Publish job queued'),
+      jobProgressPayload('dispatching', 50, 'Dispatching dry-run target'),
+      jobProgressPayload('posted', 100, 'Dry-run target complete'),
+    ]
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(progressResponses.shift() ?? jobProgressPayload('posted', 100, 'Dry-run target complete'))
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    try {
+      render(<AutoPostFanpagePage />)
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText('ZooPost Fanpage')).toBeTruthy()
+      fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+      await act(async () => {
+        fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText('Publish job queued')).toBeTruthy()
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(1)
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000)
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Dispatching dry-run target')).toBeTruthy()
+      expect(screen.getByText('50%')).toBeTruthy()
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(2)
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000)
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Dry-run target complete')).toBeTruthy()
+      expect(screen.getByText('100%')).toBeTruthy()
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(3)
+
+      await act(async () => {
+        vi.advanceTimersByTime(9000)
+        await Promise.resolve()
+      })
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('continues polling when non-terminal status repeats', async () => {
+    vi.useFakeTimers()
+    const progressResponses = [
+      jobProgressPayload('queued', 0, 'Publish job queued'),
+      jobProgressPayload('queued', 0, 'Publish job still queued'),
+      jobProgressPayload('posted', 100, 'Dry-run target complete'),
+    ]
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(progressResponses.shift() ?? jobProgressPayload('posted', 100, 'Dry-run target complete'))
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    try {
+      render(<AutoPostFanpagePage />)
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+      await act(async () => {
+        fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Publish job queued')).toBeTruthy()
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Publish job still queued')).toBeTruthy()
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(2)
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Dry-run target complete')).toBeTruthy()
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('continues polling after a transient progress fetch error', async () => {
+    vi.useFakeTimers()
+    let progressCallCount = 0
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-1', channel_id: 'channel-1', status: 'queued' }] })
+      if (url === '/api/publish-jobs/job-1/progress') {
+        progressCallCount += 1
+        if (progressCallCount === 2) return Promise.reject(new Error('temporary network error'))
+        return jsonResponse(progressCallCount === 1
+          ? jobProgressPayload('queued', 0, 'Publish job queued')
+          : jobProgressPayload('posted', 100, 'Dry-run target complete'))
+      }
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    try {
+      render(<AutoPostFanpagePage />)
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+      await act(async () => {
+        fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Publish job queued')).toBeTruthy()
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Không tải được tiến trình dry-run.')).toBeTruthy()
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(2)
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Dry-run target complete')).toBeTruthy()
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores stale progress responses from an older job', async () => {
+    vi.useFakeTimers()
+    const firstPollProgress = deferredResponse()
+    let jobCreateCount = 0
+    let jobOneProgressCount = 0
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: `content-${jobCreateCount + 1}`, title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') {
+        jobCreateCount += 1
+        return jsonResponse({ id: `job-${jobCreateCount}`, status: 'queued', dry_run: true, targets: [{ id: `target-${jobCreateCount}`, channel_id: 'channel-1', status: 'queued' }] })
+      }
+      if (url === '/api/publish-jobs/job-1/progress') {
+        jobOneProgressCount += 1
+        return jobOneProgressCount === 1
+          ? jsonResponse(progressPayload('job-1', 'queued', 0, 'First job queued'))
+          : firstPollProgress.pending
+      }
+      if (url === '/api/publish-jobs/job-2/progress') return jsonResponse(progressPayload('job-2', 'queued', 0, 'Second job queued'))
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    try {
+      render(<AutoPostFanpagePage />)
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText('ZooPost Fanpage')).toBeTruthy()
+      fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+      await act(async () => {
+        fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('First job queued')).toBeTruthy()
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000)
+        await Promise.resolve()
+      })
+      expect(calls.filter(call => call.url === '/api/publish-jobs/job-1/progress')).toHaveLength(2)
+
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByText('Second job queued')).toBeTruthy()
+
+      await act(async () => {
+        firstPollProgress.resolve(progressPayload('job-1', 'posted', 100, 'First job stale complete'))
+        await firstPollProgress.pending
+      })
+
+      expect(screen.queryByText('First job stale complete')).toBeNull()
+      expect(screen.getByText('Second job queued')).toBeTruthy()
+      expect(screen.getByText('0%')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not publish stale content if the draft changes while saving', async () => {

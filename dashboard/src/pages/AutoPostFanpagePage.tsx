@@ -24,11 +24,17 @@ const ATTACHMENT_MODES = [
 
 const DEFAULT_BODY = 'Xin chào [r]\n$SPIN=[Nội dung A | Nội dung B | Nội dung C]'
 const DEFAULT_TITLE = 'ZooPost dry-run'
+const PUBLISH_PROGRESS_POLL_MS = 3000
+const PUBLISH_TERMINAL_STATUSES = new Set(['posted', 'completed', 'failed', 'cancelled'])
 
 type SavedContentDraft = { id: string; title: string; body: string; mediaAssetIds: string[] }
 
 function sameMediaAssets(left: string[], right: string[]) {
   return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
+function isPublishTerminalStatus(status: string | null | undefined) {
+  return status ? PUBLISH_TERMINAL_STATUSES.has(status) : false
 }
 
 export default function AutoPostFanpagePage() {
@@ -38,6 +44,7 @@ export default function AutoPostFanpagePage() {
   const [body, setBody] = useState(DEFAULT_BODY)
   const [title, setTitle] = useState(DEFAULT_TITLE)
   const savedContentRef = useRef<SavedContentDraft | null>(null)
+  const activeJobIdRef = useRef<string | null>(null)
   const saveSequence = useRef(0)
   const [preview, setPreview] = useState<ContentPreviewResult | null>(null)
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([])
@@ -54,6 +61,7 @@ export default function AutoPostFanpagePage() {
   const [message, setMessage] = useState<string | null>(null)
   const [job, setJob] = useState<PublishJob | null>(null)
   const [progress, setProgress] = useState<PublishJobProgress | null>(null)
+  const [progressPollTick, setProgressPollTick] = useState(0)
 
   const loadChannels = useCallback(async () => {
     setLoading(true)
@@ -102,6 +110,25 @@ export default function AutoPostFanpagePage() {
   const safeMaxDelay = Math.max(safeMinDelay, normalizedMaxDelay)
   const scheduledDate = useSchedule && scheduledAt ? new Date(scheduledAt) : null
   const validScheduledAt = scheduledDate && Number.isFinite(scheduledDate.getTime()) ? scheduledDate.toISOString() : null
+  const refreshProgress = useCallback(async (jobId: string) => {
+    try {
+      const currentProgress = await fetchAPI<PublishJobProgress>(`/api/publish-jobs/${jobId}/progress`)
+      if (activeJobIdRef.current === jobId) setProgress(currentProgress)
+      return currentProgress
+    } catch {
+      if (activeJobIdRef.current === jobId) setMessage('Không tải được tiến trình dry-run.')
+      return null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!job || isPublishTerminalStatus(progress?.status ?? job.status)) return
+    const timer = window.setTimeout(async () => {
+      await refreshProgress(job.id)
+      if (activeJobIdRef.current === job.id) setProgressPollTick(tick => tick + 1)
+    }, PUBLISH_PROGRESS_POLL_MS)
+    return () => window.clearTimeout(timer)
+  }, [job, progress?.status, progressPollTick, refreshProgress])
 
   async function saveContent() {
     const cached = savedContentRef.current
@@ -185,8 +212,10 @@ export default function AutoPostFanpagePage() {
       return
     }
     setSubmitting(true)
+    activeJobIdRef.current = null
     setJob(null)
     setProgress(null)
+    setProgressPollTick(0)
     try {
       const savedContentId = await saveContent()
       if (!savedContentId) {
@@ -201,9 +230,9 @@ export default function AutoPostFanpagePage() {
         scheduled_at: useSchedule ? validScheduledAt : null,
         delay_policy: { min_delay_seconds: safeMinDelay, max_delay_seconds: safeMaxDelay },
       })
+      activeJobIdRef.current = created.id
       setJob(created)
-      const currentProgress = await fetchAPI<PublishJobProgress>(`/api/publish-jobs/${created.id}/progress`)
-      setProgress(currentProgress)
+      await refreshProgress(created.id)
       setMessage(`Đã tạo dry-run job ${created.id.slice(0, 8)} cho ${created.targets.length} kênh.`)
     } catch {
       setMessage('Không tạo được dry-run job.')
