@@ -19,6 +19,19 @@ const selectorResponse = {
       disabled_reason: null,
       supported_task_types: ['facebook.post_text'],
     },
+    {
+      id: 'channel-2',
+      platform: 'facebook',
+      channel_type: 'fanpage',
+      display_name: 'Backup Fanpage',
+      username: 'backup-page',
+      safe_display_id: 'fanpage-backup',
+      connection_status: 'ready',
+      live_guard_enabled: false,
+      is_selectable: true,
+      disabled_reason: null,
+      supported_task_types: ['facebook.post_text'],
+    },
   ],
   limit: 100,
 }
@@ -202,17 +215,99 @@ describe('AutoPostFanpagePage', () => {
     })
 
     await waitFor(() => expect(screen.getByText('Chi tiết target')).toBeTruthy())
+    expect(screen.getByText('Target thất bại: 1')).toBeTruthy()
     expect(screen.getByText('target-1')).toBeTruthy()
-    expect(screen.getByText('channel-1')).toBeTruthy()
-    expect(screen.getByText('posted')).toBeTruthy()
+    expect(screen.getAllByText('ZooPost Fanpage').length).toBeGreaterThan(0)
+    expect(screen.getByText('fanpage-channel')).toBeTruthy()
+    expect(screen.getByText('Đã mô phỏng')).toBeTruthy()
     expect(screen.getByText('Số lần thử: 1')).toBeTruthy()
     expect(screen.getByText('https://facebook.example/posts/1')).toBeTruthy()
     expect(screen.getByText('target-2')).toBeTruthy()
-    expect(screen.getByText('channel-2')).toBeTruthy()
-    expect(screen.getAllByText('failed').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Backup Fanpage').length).toBeGreaterThan(0)
+    expect(screen.getByText('fanpage-backup')).toBeTruthy()
+    expect(screen.getAllByText('Thất bại').length).toBeGreaterThan(0)
     expect(screen.getByText('Số lần thử: 2')).toBeTruthy()
     expect(screen.getByText('POST_FAILED')).toBeTruthy()
     expect(screen.getByText('Dry-run validation failed')).toBeTruthy()
+  })
+
+  it('does not expose channel ids when selector metadata lacks a safe display id', async () => {
+    const selectorWithNullSafeId = {
+      items: [{ ...selectorResponse.items[0], id: 'channel-null-safe', display_name: 'Null Safe Fanpage', safe_display_id: null }],
+      limit: 100,
+    }
+    const detailedProgress = {
+      job_id: 'job-1',
+      status: 'posted',
+      counts: { total: 1, queued: 0, dispatching: 0, posted: 1, failed: 0, cancelled: 0 },
+      percent_complete: 100,
+      targets: [
+        { id: 'target-null-safe', channel_id: 'channel-null-safe', status: 'posted', attempts: 1, external_post_id: null, external_post_url: null, error_code: null, error_message: null },
+      ],
+      events: [{ id: 'event-posted', type: 'job.posted', severity: 'info', message: 'Dry-run target complete', target_id: 'target-null-safe', data: {} }],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorWithNullSafeId)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-null-safe', channel_id: 'channel-null-safe', status: 'queued' }] })
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(detailedProgress)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('Null Safe Fanpage')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/Null Safe Fanpage/))
+    await act(async () => {
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+    })
+
+    await waitFor(() => expect(screen.getByText('target-null-safe')).toBeTruthy())
+    expect(screen.getAllByText('Null Safe Fanpage').length).toBeGreaterThan(0)
+    expect(screen.getByText('ID an toàn chưa có')).toBeTruthy()
+    expect(screen.queryByText('channel-null-safe')).toBeNull()
+  })
+
+  it('falls back to channel ids and labels non-final target statuses', async () => {
+    const detailedProgress = {
+      job_id: 'job-1',
+      status: 'dispatching',
+      counts: { total: 4, queued: 1, dispatching: 1, posted: 0, failed: 0, cancelled: 1 },
+      percent_complete: 50,
+      targets: [
+        { id: 'target-dispatching', channel_id: 'unknown-dispatching', status: 'dispatching', attempts: 1, external_post_id: null, external_post_url: null, error_code: null, error_message: null },
+        { id: 'target-cancelled', channel_id: 'unknown-cancelled', status: 'cancelled', attempts: 0, external_post_id: null, external_post_url: null, error_code: null, error_message: null },
+        { id: 'target-retry', channel_id: 'unknown-retry', status: 'retry', attempts: 2, external_post_id: null, external_post_url: null, error_code: null, error_message: null },
+      ],
+      events: [{ id: 'event-progress', type: 'job.dispatching', severity: 'info', message: 'Dispatching targets', target_id: null, data: {} }],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, targets: [{ id: 'target-dispatching', channel_id: 'unknown-dispatching', status: 'queued' }] })
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(detailedProgress)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+    await act(async () => {
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+    })
+
+    await waitFor(() => expect(screen.getByText('target-dispatching')).toBeTruthy())
+    expect(screen.getAllByText('unknown-dispatching')).toHaveLength(2)
+    expect(screen.getAllByText('unknown-cancelled')).toHaveLength(2)
+    expect(screen.getAllByText('unknown-retry')).toHaveLength(2)
+    expect(screen.getAllByText('Đang xử lý').length).toBeGreaterThan(0)
+    expect(screen.getByText('Đã hủy')).toBeTruthy()
+    expect(screen.getAllByText('Đang chờ').length).toBeGreaterThan(0)
   })
 
   it('renders unsafe target URLs and raw-looking errors safely', async () => {

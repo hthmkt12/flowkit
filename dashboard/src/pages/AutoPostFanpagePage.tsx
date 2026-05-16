@@ -360,12 +360,12 @@ export default function AutoPostFanpagePage() {
         </button>
       </div>
 
-      {job && <ProgressPreview job={job} progress={progress} />}
+      {job && <ProgressPreview job={job} progress={progress} channels={channels} />}
     </div>
   )
 }
 
-function ProgressPreview({ job, progress }: { job: PublishJob; progress: PublishJobProgress | null }) {
+function ProgressPreview({ job, progress, channels }: { job: PublishJob; progress: PublishJobProgress | null; channels: ChannelSelectorItem[] }) {
   const counts = progress?.counts
   const total = counts?.total ?? job.targets.length
   const queued = counts?.queued ?? job.targets.filter(target => ['queued', 'retry'].includes(target.status)).length
@@ -374,6 +374,7 @@ function ProgressPreview({ job, progress }: { job: PublishJob; progress: Publish
   const dispatching = counts?.dispatching ?? 0
   const percent = progress?.percent_complete ?? (total === 0 ? 0 : Math.round((posted + failed) * 100 / total))
   const safeEventMessage = safeProgressMessage(progress?.events[0]?.message ?? null)
+  const channelById = new Map(channels.map(channel => [channel.id, channel]))
   return (
     <section style={panelStyle()}>
       <SectionTitle title="Modal — Tiến Trình Dry-run" />
@@ -394,7 +395,7 @@ function ProgressPreview({ job, progress }: { job: PublishJob; progress: Publish
             <span style={chipStyle()}>Còn lại {Math.max(0, total - posted - failed)}</span>
           </div>
           {safeEventMessage && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{safeEventMessage}</div>}
-          {progress && <TargetProgressDetails progress={progress} />}
+          {progress && <TargetProgressDetails progress={progress} channelById={channelById} />}
           <div style={{ fontSize: '12px', color: 'var(--yellow)' }}>Đây là dry-run preview. Live posting vẫn cần Safety Gate và phê duyệt riêng.</div>
           <button type="button" disabled style={{ ...smallButtonStyle(), width: 'fit-content' }}>TẠM DỪNG</button>
         </div>
@@ -427,27 +428,50 @@ function safeTargetErrorMessage(message: string | null) {
   return message.length > 160 ? `${message.slice(0, 157)}...` : message
 }
 
-function TargetProgressDetails({ progress }: { progress: PublishJobProgress }) {
+function progressStatusLabel(status: string) {
+  if (status === 'posted') return 'Đã mô phỏng'
+  if (status === 'failed') return 'Thất bại'
+  if (status === 'dispatching') return 'Đang xử lý'
+  if (status === 'cancelled') return 'Đã hủy'
+  return 'Đang chờ'
+}
+
+function progressStatusChipStyle(status: string): React.CSSProperties {
+  const color = status === 'posted' ? 'var(--green)' : status === 'failed' ? 'var(--red)' : status === 'dispatching' ? 'var(--yellow)' : 'var(--muted)'
+  return { ...chipStyle(), color, borderColor: color }
+}
+
+function TargetProgressDetails({ progress, channelById }: { progress: PublishJobProgress; channelById: Map<string, ChannelSelectorItem> }) {
+  const failedTargets = progress.targets.filter(target => target.status === 'failed').length
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      <div style={{ fontSize: '12px', fontWeight: 850 }}>Chi tiết target</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '12px', fontWeight: 850 }}>Chi tiết target</div>
+        {failedTargets > 0 && <span style={{ ...chipStyle(), color: 'var(--red)', borderColor: 'var(--red)' }}>Target thất bại: {failedTargets}</span>}
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {progress.targets.map(target => {
+          const channel = channelById.get(target.channel_id)
+          const channelName = channel?.display_name ?? target.channel_id
+          const channelSafeId = channel ? (channel.safe_display_id ?? 'ID an toàn chưa có') : target.channel_id
           const safeUrl = safeExternalPostUrl(target.external_post_url)
           const safeErrorMessage = safeTargetErrorMessage(target.error_message)
           return (
-          <div key={target.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11px', background: 'var(--surface)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-              <strong>{target.id}</strong>
-              <span style={chipStyle()}>{target.status}</span>
+            <div key={target.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11px', background: 'var(--surface)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                <strong>{target.id}</strong>
+                <span style={progressStatusChipStyle(target.status)}>{progressStatusLabel(target.status)}</span>
+              </div>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', color: 'var(--muted)' }}>
+                <span>{channelName}</span>
+                <span>{channelSafeId}</span>
+              </div>
+              <div>Số lần thử: {target.attempts}</div>
+              {safeUrl && <a href={safeUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', overflowWrap: 'anywhere' }}>{safeUrl}</a>}
+              {target.external_post_url && !safeUrl && <div style={{ color: 'var(--muted)' }}>URL không hợp lệ</div>}
+              {target.error_code && <div style={{ color: 'var(--red)', fontWeight: 800 }}>{target.error_code}</div>}
+              {safeErrorMessage && <div style={{ color: 'var(--red)', overflowWrap: 'anywhere' }}>{safeErrorMessage}</div>}
             </div>
-            <div style={{ color: 'var(--muted)' }}>{target.channel_id}</div>
-            <div>Số lần thử: {target.attempts}</div>
-            {safeUrl && <a href={safeUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', overflowWrap: 'anywhere' }}>{safeUrl}</a>}
-            {target.external_post_url && !safeUrl && <div style={{ color: 'var(--muted)' }}>URL không hợp lệ</div>}
-            {target.error_code && <div style={{ color: 'var(--red)', fontWeight: 800 }}>{target.error_code}</div>}
-            {safeErrorMessage && <div style={{ color: 'var(--red)', overflowWrap: 'anywhere' }}>{safeErrorMessage}</div>}
-          </div>
           )
         })}
       </div>
