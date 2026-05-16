@@ -160,6 +160,25 @@ describe('AutoPostFanpagePage', () => {
     expect(screen.getByText('Thời gian không hợp lệ')).toBeTruthy()
   })
 
+  it('only shows dry-run jobs in Auto Post history', async () => {
+    const historyJobs = [
+      { id: 'job-dry-run', status: 'queued', dry_run: true, created_at: '2026-05-16T10:30:00Z', targets: [{ id: 'target-dry-run', channel_id: 'channel-1', status: 'queued' }] },
+      { id: 'job-live-run', status: 'queued', dry_run: false, created_at: '2026-05-16T10:31:00Z', targets: [{ id: 'target-live-run', channel_id: 'channel-1', status: 'queued' }] },
+    ]
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse(historyJobs)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('job-dry-')).toBeTruthy()
+    expect(screen.queryByText('job-live')).toBeNull()
+  })
+
   it('filters dry-run history by status', async () => {
     const historyJobs = [
       { id: 'job-queued', status: 'queued', dry_run: true, created_at: '2026-05-16T10:30:00Z', targets: [{ id: 'target-queued', channel_id: 'channel-1', status: 'queued' }] },
