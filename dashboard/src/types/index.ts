@@ -241,14 +241,47 @@ export interface SocialChannel {
   safe_display_id?: string | null
 }
 
+export interface ChannelSelectorItem extends SocialChannel {
+  live_guard_enabled: boolean
+  is_selectable: boolean
+  disabled_reason: string | null
+  supported_task_types: string[]
+}
+
+export interface ChannelSelectorResponse {
+  items: ChannelSelectorItem[]
+  limit: number
+}
+
 export interface ContentPreviewResult {
+  content_id?: string
+  channel_id?: string | null
   body: string
   syntax_mode: string
   seed: string
+  attachments?: Array<{
+    id: string
+    type: string
+    source: string
+    url: string | null
+    local_ref: string | null
+    mime_type: string | null
+    sort_order: number
+  }>
+  warnings?: string[]
+}
+
+export interface ContentItem {
+  id: string
+  title: string | null
+  body: string
+  syntax_mode: string
+  status: string
 }
 
 export interface PublishJobTarget {
   id: string
+  channel_id?: string
   status: string
 }
 
@@ -257,4 +290,36 @@ export interface PublishJob {
   status: string
   dry_run: boolean
   targets: PublishJobTarget[]
+}
+
+export interface PublishJobProgress {
+  job_id: string
+  status: string
+  counts: {
+    total: number
+    queued: number
+    dispatching: number
+    posted: number
+    failed: number
+    cancelled: number
+  }
+  percent_complete: number
+  targets: Array<{
+    id: string
+    channel_id: string
+    status: string
+    attempts: number
+    external_post_id: string | null
+    external_post_url: string | null
+    error_code: string | null
+    error_message: string | null
+  }>
+  events: Array<{
+    id: string
+    type: string
+    severity: string
+    message: string
+    target_id: string | null
+    data?: Record<string, unknown>
+  }>
 }
