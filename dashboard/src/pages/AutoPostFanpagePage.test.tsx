@@ -170,6 +170,28 @@ describe('AutoPostFanpagePage', () => {
     expect(screen.getByText('failed · 1 target')).toBeTruthy()
   })
 
+  it('shows an empty state when the selected history status has no jobs', async () => {
+    const historyJobs = [
+      { id: 'job-queued', status: 'queued', dry_run: true, targets: [{ id: 'target-queued', channel_id: 'channel-1', status: 'queued' }] },
+    ]
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/publish-jobs') return jsonResponse(historyJobs)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('job-queu')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Lọc lịch sử dry-run theo trạng thái'), { target: { value: 'failed' } })
+
+    expect(screen.getByText('Không có dry-run job ở trạng thái này.')).toBeTruthy()
+    expect(screen.queryByText('job-queu')).toBeNull()
+  })
+
   it('creates a dry-run job and renders backend progress', async () => {
     render(<AutoPostFanpagePage />)
 
