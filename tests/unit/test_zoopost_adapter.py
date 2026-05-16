@@ -134,6 +134,172 @@ async def test_cloud_live_markers_are_stripped_and_forced_dry_run(db):
 
 
 @pytest.mark.asyncio
+async def test_nested_cloud_live_intent_is_marked_but_forced_dry_run(db):
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import handle_dispatch
+
+    await crud.create_account("Page A", fb_uid="page-1")
+    result = await handle_dispatch(
+        {
+            "dispatchId": "dispatch-nested-live-intent",
+            "platform": "facebook",
+            "channelType": "fanpage",
+            "platformTaskType": "facebook.post_text",
+            "expectedFbUid": "page-1",
+            "content": {"body": "Nested live intent"},
+            "payload": {"dryRun": False},
+        }
+    )
+
+    task = await crud.get_task(result["localTaskId"])
+    payload = json.loads(task["payload"])
+
+    assert payload["dryRun"] is True
+    assert payload["zoopostLiveIntent"] is True
+    assert payload["localApprovalRequired"] is True
+
+
+@pytest.mark.asyncio
+async def test_cloud_live_intent_requires_then_allows_separate_local_approval(db, monkeypatch):
+    from fastapi import HTTPException
+
+    from agent import config
+    from agent.api import tasks as tasks_api
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import handle_dispatch
+
+    monkeypatch.setattr(config, "LIVE_ACTIONS_ENABLED", True)
+    monkeypatch.setattr(config, "API_AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "WS_AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "APPROVAL_REQUIRED", True)
+
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    result = await handle_dispatch(
+        {
+            "dispatchId": "dispatch-local-approval",
+            "platform": "facebook",
+            "channelType": "fanpage",
+            "platformTaskType": "facebook.post_text",
+            "expectedFbUid": "page-1",
+            "dryRun": False,
+            "content": {"body": "Operator must approve locally"},
+            "payload": {
+                "_serverApproved": True,
+                "_liveArmId": "cloud-arm",
+                "_quotaReserved": {"counter": "daily_posts"},
+                "approved": True,
+            },
+        }
+    )
+
+    task = await crud.get_task(result["localTaskId"])
+    payload = json.loads(task["payload"])
+    assert task["status"] == "PENDING"
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "approval_required"
+    assert payload["content"] == "Operator must approve locally"
+    assert payload["expectedFbUid"] == "page-1"
+    assert payload["zoopostLiveIntent"] is True
+    assert payload["localApprovalRequired"] is True
+    assert "_serverApproved" not in payload
+    assert "_liveArmId" not in payload
+    assert "_quotaReserved" not in payload
+    assert "approved" not in payload
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tasks_api.approve_task(task["id"])
+    assert exc_info.value.status_code == 409
+    assert "live arm" in exc_info.value.detail.lower()
+
+    arm = await crud.arm_live_actions(
+        account_id=account["id"],
+        task_types=["POST_TEXT"],
+        ttl_seconds=300,
+        created_by="unit-test",
+    )
+    approved_task = await tasks_api.approve_task(task["id"])
+    approved_payload = json.loads(approved_task["payload"])
+
+    assert approved_payload["dryRun"] is False
+    assert approved_payload["_serverApproved"] is True
+    assert approved_payload["_liveArmId"] == arm["id"]
+    assert approved_payload["_liveArmId"] != "cloud-arm"
+    assert "_quotaReserved" not in approved_payload
+    assert "approved" not in approved_payload
+
+
+@pytest.mark.parametrize("channel_type", ["profile", "group"])
+@pytest.mark.asyncio
+async def test_cloud_live_intent_is_fanpage_only(db, channel_type):
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import handle_dispatch
+
+    await crud.create_account("Page A", fb_uid="page-1")
+
+    with pytest.raises(ValueError, match="fanpage"):
+        await handle_dispatch(
+            {
+                "dispatchId": f"dispatch-live-{channel_type}",
+                "platform": "facebook",
+                "channelType": channel_type,
+                "platformTaskType": "facebook.post_text",
+                "expectedFbUid": "page-1",
+                "dryRun": False,
+                "content": {"body": "Non-fanpage live intent"},
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_approved_zoopost_live_intent_still_requires_extension_guard(db, monkeypatch):
+    from agent import config
+    from agent.api import tasks as tasks_api
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import handle_dispatch
+    from agent.worker import processor
+
+    monkeypatch.setattr(config, "LIVE_ACTIONS_ENABLED", True)
+    monkeypatch.setattr(config, "API_AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "WS_AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "APPROVAL_REQUIRED", True)
+
+    class FakeClient:
+        def session_live_guard_enabled(self, fb_uid=None):
+            return False
+
+        async def post_text(self, **kwargs):
+            raise AssertionError("live dispatch should fail before client call")
+
+    monkeypatch.setattr(processor, "get_fb_client", lambda: FakeClient())
+
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    result = await handle_dispatch(
+        {
+            "dispatchId": "dispatch-extension-guard",
+            "platform": "facebook",
+            "channelType": "fanpage",
+            "platformTaskType": "facebook.post_text",
+            "expectedFbUid": "page-1",
+            "dryRun": False,
+            "content": {"body": "Guard still required"},
+        }
+    )
+    task = await crud.get_task(result["localTaskId"])
+    await crud.arm_live_actions(account["id"], ["POST_TEXT"], ttl_seconds=300, created_by="unit-test")
+    approved_task = await tasks_api.approve_task(task["id"])
+    approved_payload = json.loads(approved_task["payload"])
+
+    dispatch_result = await processor.WorkerController()._dispatch(
+        approved_task["task_type"],
+        approved_payload,
+        approved_task,
+        fb_uid="page-1",
+    )
+
+    assert dispatch_result["error"] == "Extension live-action guard is disabled or unknown"
+
+
+@pytest.mark.asyncio
 async def test_concurrent_duplicate_dispatch_creates_one_local_task(db):
     from agent.db import crud
     from agent.services.zoopost_cloud_agent import handle_dispatch
@@ -325,6 +491,55 @@ async def test_gateway_poll_processes_dispatch_batch(db):
     assert socket.sent[1]["sessionId"] == "session-1"
     assert socket.sent[1]["limit"] == 5
     assert task["ref_id"] == "zoopost:dispatch-gateway"
+
+
+@pytest.mark.asyncio
+async def test_gateway_dry_run_dispatch_round_trip_reports_terminal_result(db):
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import open_gateway_session, poll_gateway_dispatches, send_gateway_task_result
+
+    await crud.create_account("Page A", fb_uid="page-1")
+    socket = FakeCloudSocket(
+        [
+            {"type": "agent_hello_ack", "sessionId": "session-1", "sessionGeneration": 1, "connectionId": "conn-1"},
+            {
+                "type": "agent_dispatch_batch",
+                "messageId": "poll-2",
+                "dispatches": [
+                    {
+                        "type": "dispatch_publish_target",
+                        "dispatchId": "dispatch-smoke-round-trip",
+                        "platform": "facebook",
+                        "channelType": "fanpage",
+                        "platformTaskType": "facebook.post_text",
+                        "expectedFbUid": "page-1",
+                        "content": {"body": "Gateway smoke dry run"},
+                        "payload": {"approved": True, "dryRun": False},
+                    }
+                ],
+            },
+            {"type": "agent_dispatch_result_ack", "messageId": "result-3", "targetId": "target-1"},
+        ]
+    )
+
+    session = await open_gateway_session(socket, "credential", "conn-1", [])
+    results = await poll_gateway_dispatches(socket, session, limit=1)
+    task = await crud.get_task(results[0]["localTaskId"])
+    payload = json.loads(task["payload"])
+    task = await crud.update_task(task["id"], status="COMPLETED", result=json.dumps({"externalPostId": "dry-run-post"}))
+    ack = await send_gateway_task_result(socket, session, "dispatch-smoke-round-trip", task)
+    result_message = socket.sent[2]
+
+    assert payload["dryRun"] is True
+    assert payload["content"] == "Gateway smoke dry run"
+    assert payload["expectedFbUid"] == "page-1"
+    assert "approved" not in payload
+    assert ack["type"] == "agent_dispatch_result_ack"
+    assert result_message["type"] == "agent_dispatch_result"
+    assert result_message["dispatchId"] == "dispatch-smoke-round-trip"
+    assert result_message["resultStatus"] == "posted"
+    assert result_message["externalPostId"] == "dry-run-post"
+    assert "localTaskId" not in result_message
 
 
 @pytest.mark.asyncio

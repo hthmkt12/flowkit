@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import hashes
 from agent.db.schema import get_db
 from agent import config
 from agent.config import DATA_ENCRYPTION_KEY
-from agent.services.safety_gate import MUTATING_TASK_TYPES, dry_run_from_payload, enforce_payload, is_mutating_task
+from agent.services.safety_gate import MUTATING_TASK_TYPES, dry_run_from_payload, enforce_payload, is_mutating_task, strip_server_owned_payload_fields
 from agent.utils.time import utc_now, utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -87,11 +87,7 @@ def _rows_to_list(rows) -> list[dict]:
 
 
 def _strip_task_server_fields(payload: dict) -> dict:
-    payload.pop("_quotaReserved", None)
-    payload.pop("_serverApproved", None)
-    payload.pop("_liveArmId", None)
-    payload.pop("approved", None)
-    return payload
+    return strip_server_owned_payload_fields(payload)
 
 
 def _enforce_task_payload_for_insert(task_type: str, raw_payload) -> str | None:

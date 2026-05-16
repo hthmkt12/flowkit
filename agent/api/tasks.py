@@ -7,17 +7,13 @@ from typing import Optional
 
 from agent import config
 from agent.db import crud
-from agent.services.safety_gate import enforce_payload
+from agent.services.safety_gate import enforce_payload, strip_server_owned_payload_fields
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
 def _strip_external_server_fields(payload: dict) -> dict:
-    payload.pop("_quotaReserved", None)
-    payload.pop("_serverApproved", None)
-    payload.pop("_liveArmId", None)
-    payload.pop("approved", None)
-    return payload
+    return strip_server_owned_payload_fields(payload)
 
 
 class TaskCreate(BaseModel):

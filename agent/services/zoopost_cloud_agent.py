@@ -18,18 +18,9 @@ import websockets
 from agent import config
 from agent.db import crud
 from agent.services.fb_client import get_fb_client
+from agent.services.safety_gate import strip_server_owned_payload_fields
 
 DISPATCH_REF_PREFIX = "zoopost:"
-SERVER_OWNED_FIELDS = {
-    "_serverApproved",
-    "serverApproved",
-    "_liveArmId",
-    "liveArmId",
-    "live_arm_id",
-    "_quotaReserved",
-    "quotaReserved",
-    "approved",
-}
 MEDIA_PATH_FIELDS = {"path", "local_path", "localPath", "mediaPath", "mediaPaths", "filePath", "file_path"}
 TASK_TYPE_MAP = {
     "facebook.post_text": "POST_TEXT",
@@ -347,8 +338,11 @@ async def handle_dispatch(dispatch: dict[str, Any]) -> dict[str, Any]:
 
     if dispatch.get("platform") != "facebook":
         raise ValueError("only facebook dispatch is supported")
-    if dispatch.get("channelType") not in CHANNEL_TYPES:
+    channel_type = dispatch.get("channelType")
+    if channel_type not in CHANNEL_TYPES:
         raise ValueError("unsupported facebook channel type")
+    if _has_live_intent(dispatch) and channel_type != "fanpage":
+        raise ValueError("cloud live intent is fanpage-only")
 
     task_type = TASK_TYPE_MAP.get(_required_text(dispatch, "platformTaskType"))
     if not task_type:
@@ -405,11 +399,19 @@ def _build_task_payload(dispatch: dict[str, Any], expected_fb_uid: str) -> dict[
             "expectedFbUid": expected_fb_uid,
         }
     )
+    if _has_live_intent(dispatch):
+        payload["zoopostLiveIntent"] = True
+        payload["localApprovalRequired"] = True
     if media:
         payload["zoopostMediaRefs"] = media
     if dispatch.get("target"):
         payload["target"] = dispatch["target"]
     return payload
+
+
+def _has_live_intent(dispatch: dict[str, Any]) -> bool:
+    payload = dispatch.get("payload")
+    return dispatch.get("dryRun") is False or (isinstance(payload, dict) and payload.get("dryRun") is False)
 
 
 def _optional_field(data: dict[str, Any], field: str, default: Any) -> Any:
@@ -418,9 +420,7 @@ def _optional_field(data: dict[str, Any], field: str, default: Any) -> Any:
 
 
 def _strip_server_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    for field in SERVER_OWNED_FIELDS:
-        payload.pop(field, None)
-    return payload
+    return strip_server_owned_payload_fields(payload)
 
 
 def _reject_worker_media_payload(value: Any):

@@ -122,6 +122,48 @@ async def test_create_task_strips_client_supplied_live_arm_marker(test_account, 
 
 
 @pytest.mark.asyncio
+async def test_create_task_strips_all_client_supplied_server_owned_aliases(test_account, monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.APPROVAL_REQUIRED", True, raising=False)
+
+    task = await tasks_api.create_task(
+        tasks_api.TaskCreate(
+            account_id=test_account["id"],
+            task_type="POST_TEXT",
+            payload={
+                "content": "hostile server-owned aliases",
+                "_quotaReserved": {"counter": "daily_posts"},
+                "quotaReserved": {"counter": "daily_posts"},
+                "_serverApproved": True,
+                "serverApproved": True,
+                "_liveArmId": "client-arm",
+                "liveArmId": "client-arm",
+                "live_arm_id": "client-arm",
+                "approved": True,
+            },
+        )
+    )
+
+    payload = json.loads(task["payload"] or "{}")
+
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "approval_required"
+    for field in (
+        "_quotaReserved",
+        "quotaReserved",
+        "_serverApproved",
+        "serverApproved",
+        "_liveArmId",
+        "liveArmId",
+        "live_arm_id",
+        "approved",
+    ):
+        assert field not in payload
+
+
+@pytest.mark.asyncio
 async def test_worker_dispatch_rejects_live_mutating_task_without_active_arm(db_ready, monkeypatch):
     monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
     monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)

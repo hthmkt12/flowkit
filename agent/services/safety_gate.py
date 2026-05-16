@@ -12,6 +12,17 @@ from typing import Any
 from agent import config
 
 
+SERVER_OWNED_PAYLOAD_FIELDS = {
+    "_serverApproved",
+    "serverApproved",
+    "_liveArmId",
+    "liveArmId",
+    "live_arm_id",
+    "_quotaReserved",
+    "quotaReserved",
+    "approved",
+}
+
 MUTATING_TASK_TYPES = {
     "POST_TEXT",
     "POST_IMAGE",
@@ -32,6 +43,12 @@ MUTATING_TASK_TYPES = {
     "FOLLOW_PAGE",
     "UNFOLLOW_PAGE",
 }
+
+
+def strip_server_owned_payload_fields(payload: dict) -> dict:
+    for field in SERVER_OWNED_PAYLOAD_FIELDS:
+        payload.pop(field, None)
+    return payload
 
 
 def is_mutating_task(task_type: str) -> bool:
