@@ -4,11 +4,10 @@ import type { CSSProperties, ReactNode } from 'react'
 type Props = {
   readySessions: number
   completedDryRuns: number
-  failedTargets: number
 }
 
-export function LocalPilotDemoReadinessStrip({ readySessions, completedDryRuns, failedTargets }: Props) {
-  const readyToDemo = readySessions > 0 && completedDryRuns > 0 && failedTargets === 0
+export function LocalPilotDemoReadinessStrip({ readySessions, completedDryRuns }: Props) {
+  const readyToDemo = readySessions > 0 && completedDryRuns > 0
   return (
     <section style={panelStyle(readyToDemo)}>
       <div style={headerStyle}>

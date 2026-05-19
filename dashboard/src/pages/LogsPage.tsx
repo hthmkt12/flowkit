@@ -71,7 +71,6 @@ export default function LogsPage() {
       <LocalPilotDemoReadinessStrip
         readySessions={readySessions.length}
         completedDryRuns={completedDryRuns}
-        failedTargets={failedTargets}
       />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px' }}>
