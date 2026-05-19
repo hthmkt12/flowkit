@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { CheckCircle2, ClipboardList, FileText, Radio, RefreshCw, ShieldCheck, Wifi } from 'lucide-react'
 import { fetchAPI } from '../api/client'
+import { LocalPilotChecklist } from '../components/local-pilot-checklist'
 import type { AgentInstallation, AgentSessionReadiness, AuditLogResponse, ChannelSelectorResponse, DashboardSummary, PublishJob } from '../types'
 
 type EvidenceState = {
@@ -78,6 +79,8 @@ export default function LogsPage() {
           ))}
         </div>
       </section>
+
+      <LocalPilotChecklist />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px', alignItems: 'start' }}>
         <section style={panelStyle()}>

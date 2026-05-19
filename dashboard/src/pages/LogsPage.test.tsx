@@ -10,6 +10,7 @@ describe('LogsPage evidence view', () => {
   const sensitiveText = 'secret-token credential-cookie 100004822807900 https://facebook.com/profile'
 
   beforeEach(() => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn() } })
     vi.stubGlobal('fetch', vi.fn((url: string) => {
       if (url === '/api/dashboard/summary') return jsonResponse({ kpis: { scheduled_posts: 2, published_posts: 1, total_channels: 1, total_reach: 0 }, status_bar: { buffer_api: 'not_configured', imgbb_api: 'not_configured', pancake: 'not_synced' }, scheduled_targets: 2, published_targets: 1, failed_targets: 0, total_channels: 1 })
       if (url === '/api/publish-jobs?limit=8') return jsonResponse([{ id: 'job-12345678', status: 'completed', dry_run: true, created_at: '2026-05-19T09:00:00Z', targets: [{ id: 'target-1', status: 'posted' }] }])
@@ -36,6 +37,8 @@ describe('LogsPage evidence view', () => {
     expect(screen.getByText('publish_job.created')).toBeTruthy()
     expect(screen.getByText('dry_run=true')).toBeTruthy()
     expect(screen.getByText('no agent credential in browser')).toBeTruthy()
+    expect(screen.getByText('Local Pilot Checklist')).toBeTruthy()
+    expect(screen.getByText('.\\scripts\\demo-sales-local-pilot-ready.ps1 -StartPairedFbkit -StopExistingFbkit')).toBeTruthy()
 
     await waitFor(() => {
       expect(screen.queryByText('100004822807900')).toBeNull()
