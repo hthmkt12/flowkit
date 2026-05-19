@@ -11,6 +11,14 @@ export default defineConfig(({ mode }) => {
   const zoopostCloudApiProxy = zoopostCloudBearerToken
     ? { target: zoopostCloudTarget, changeOrigin: true, headers: { Authorization: `Bearer ${zoopostCloudBearerToken}` } }
     : { target: zoopostCloudTarget, changeOrigin: true }
+  const zoopostCloudWsProxy = zoopostCloudBearerToken
+    ? {
+        target: zoopostCloudTarget.replace(/^http/, 'ws'),
+        changeOrigin: true,
+        ws: true,
+        headers: { 'Sec-WebSocket-Protocol': `bearer.${zoopostCloudBearerToken}` },
+      }
+    : { target: zoopostCloudTarget.replace(/^http/, 'ws'), changeOrigin: true, ws: true }
 
   return {
     plugins: [react(), tailwindcss()],
@@ -23,8 +31,10 @@ export default defineConfig(({ mode }) => {
         '/api/media-assets': zoopostCloudApiProxy,
         '/api/publish-jobs': zoopostCloudApiProxy,
         '/api/live-arms': zoopostCloudApiProxy,
+        '/api/audit-logs': zoopostCloudApiProxy,
         '/api/dashboard': zoopostCloudApiProxy,
         '/agent-gateway': { target: zoopostCloudTarget, changeOrigin: true, ws: true },
+        '/ws/dashboard': zoopostCloudWsProxy,
         '/api': { target: fbkitTarget, changeOrigin: true },
         '/ws': { target: fbkitTarget.replace(/^http/, 'ws'), ws: true },
         '/health': { target: fbkitTarget, changeOrigin: true },

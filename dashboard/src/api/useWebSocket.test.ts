@@ -1,7 +1,7 @@
 import { act, cleanup, render, renderHook, screen } from '@testing-library/react'
 import { createElement, Fragment } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useWebSocket } from './useWebSocket'
+import { dashboardWebSocketProtocols, useWebSocket } from './useWebSocket'
 
 type ActEnvironmentGlobal = typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 
@@ -13,9 +13,11 @@ class MockWebSocket {
   onclose: ((event: CloseEvent) => void) | null = null
   onerror: ((event: Event) => void) | null = null
   onmessage: ((event: MessageEvent<string>) => void) | null = null
+  protocols?: string | string[]
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url
+    this.protocols = protocols
     MockWebSocket.instances.push(this)
   }
 
@@ -57,6 +59,7 @@ describe('useWebSocket', () => {
   beforeEach(() => {
     ;(globalThis as ActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true
     MockWebSocket.instances = []
+    window.localStorage.clear()
     vi.useFakeTimers()
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
   })
@@ -74,6 +77,7 @@ describe('useWebSocket', () => {
 
     expect(MockWebSocket.instances).toHaveLength(1)
     expect(MockWebSocket.instances[0].url).toMatch(/\/ws\/dashboard$/)
+    expect(MockWebSocket.instances[0].protocols).toBeUndefined()
 
     act(() => {
       MockWebSocket.instances[0].emitOpen()
@@ -114,6 +118,13 @@ describe('useWebSocket', () => {
       vi.advanceTimersByTime(1)
     })
     expect(MockWebSocket.instances).toHaveLength(3)
+  })
+
+  it('uses bearer subprotocol when a browser demo token is configured', () => {
+    window.localStorage.setItem('zoopostBearerToken', 'demo-token')
+
+    expect(dashboardWebSocketProtocols()).toEqual(['bearer.demo-token'])
+    vi.clearAllTimers()
   })
 
   it('cancels a pending reconnect when the hook unmounts', () => {

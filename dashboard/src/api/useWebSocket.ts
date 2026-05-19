@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { WSEvent } from '../types'
+import { getZooPostBearerToken } from './client'
+
+export function dashboardWebSocketProtocols(): string[] | undefined {
+  const token = getZooPostBearerToken()
+  return token ? [`bearer.${token}`] : undefined
+}
 
 export function useWebSocket() {
   const [isConnected, setIsConnected] = useState(false)
@@ -12,7 +18,10 @@ export function useWebSocket() {
 
   const connect = useCallback(() => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/dashboard`)
+    const protocols = dashboardWebSocketProtocols()
+    const ws = protocols
+      ? new WebSocket(`${proto}//${window.location.host}/ws/dashboard`, protocols)
+      : new WebSocket(`${proto}//${window.location.host}/ws/dashboard`)
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -54,7 +63,10 @@ export function useWebSocket() {
         window.clearTimeout(reconnectTimeoutRef.current)
         reconnectTimeoutRef.current = null
       }
-      wsRef.current?.close()
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.close()
+      }
     }
   }, [connect])
 
