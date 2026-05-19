@@ -4,6 +4,7 @@ import { CheckCircle2, ClipboardList, FileText, Radio, RefreshCw, ShieldCheck, W
 import { fetchAPI } from '../api/client'
 import { LocalPilotChecklist } from '../components/local-pilot-checklist'
 import { LocalPilotDemoScript } from '../components/local-pilot-demo-script'
+import { LocalPilotEvidenceSummary } from '../components/local-pilot-evidence-summary'
 import type { AgentInstallation, AgentSessionReadiness, AuditLogResponse, ChannelSelectorResponse, DashboardSummary, PublishJob } from '../types'
 
 type EvidenceState = {
@@ -50,6 +51,7 @@ export default function LogsPage() {
   const readySessions = useMemo(() => Object.values(state.sessions).flat().filter(session => session.dry_run_ready), [state.sessions])
   const completedDryRuns = state.jobs.filter(job => job.dry_run && job.status === 'completed').length
   const failedTargets = state.summary?.failed_targets ?? 0
+  const selectableChannels = state.channels?.items.filter(channel => channel.is_selectable).length ?? 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -71,6 +73,14 @@ export default function LogsPage() {
         <MetricCard icon={<ClipboardList size={17} />} label="Audit records shown" value={state.audit?.items.length ?? 0} tone="#7c3aed" />
         <MetricCard icon={<ShieldCheck size={17} />} label="Failed targets" value={failedTargets} tone={failedTargets ? '#dc2626' : '#16a34a'} />
       </div>
+
+      <LocalPilotEvidenceSummary
+        readySessions={readySessions.length}
+        completedDryRuns={completedDryRuns}
+        failedTargets={failedTargets}
+        auditRecords={state.audit?.items.length ?? 0}
+        selectableChannels={selectableChannels}
+      />
 
       <section style={panelStyle()}>
         <SectionTitle icon={<ShieldCheck size={16} />} title="Safety Boundary" />
