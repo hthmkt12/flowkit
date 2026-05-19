@@ -242,6 +242,10 @@ chrome.runtime.onStartup.addListener(() => {
   connectWS();
 });
 
+// Unpacked MV3 service workers can start without firing install/startup events
+// during local demo relaunches, so connect when the worker script is evaluated.
+connectWS();
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.fbkitApiKey) return;
   if (ws && ws.readyState === 1) {

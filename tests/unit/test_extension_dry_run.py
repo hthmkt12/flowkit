@@ -104,6 +104,15 @@ def test_background_reports_extension_live_guard_state():
     assert "extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED" in background
 
 
+def test_background_connects_when_service_worker_loads():
+    background = (EXTENSION_SCRIPT.parent / "background.js").read_text(encoding="utf-8")
+
+    startup_index = background.index("chrome.runtime.onStartup.addListener")
+    storage_index = background.index("chrome.storage.onChanged.addListener")
+    load_connect_index = background.index("connectWS();", startup_index + 1)
+    assert startup_index < load_connect_index < storage_index
+
+
 def test_background_reports_profile_identity_and_heartbeat():
     background = (EXTENSION_SCRIPT.parent / "background.js").read_text(encoding="utf-8")
 
