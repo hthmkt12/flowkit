@@ -45,6 +45,12 @@ describe('LogsPage evidence view', () => {
     expect(screen.getByText('Sales Demo Script')).toBeTruthy()
     expect(screen.getByText(/paired to ZooPost Cloud/)).toBeTruthy()
     expect(screen.getByText('Safety boundary visible')).toBeTruthy()
+    expect(screen.getByText('Demo readiness')).toBeTruthy()
+    expect(screen.getByText('Ready to demo')).toBeTruthy()
+    expect(screen.getByText('Dry-run posted')).toBeTruthy()
+    expect(screen.getByText('Live actions off')).toBeTruthy()
+    expect(screen.getByText('Extension ready')).toBeTruthy()
+    expect(screen.getByText('Customer-safe evidence')).toBeTruthy()
 
     await waitFor(() => {
       expect(screen.queryByText('100004822807900')).toBeNull()

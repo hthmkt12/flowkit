@@ -4,6 +4,7 @@ import { CheckCircle2, ClipboardList, FileText, Radio, RefreshCw, ShieldCheck, W
 import { fetchAPI } from '../api/client'
 import { LocalPilotChecklist } from '../components/local-pilot-checklist'
 import { LocalPilotDemoScript } from '../components/local-pilot-demo-script'
+import { LocalPilotDemoReadinessStrip } from '../components/local-pilot-demo-readiness-strip'
 import { LocalPilotEvidenceSummary } from '../components/local-pilot-evidence-summary'
 import type { AgentInstallation, AgentSessionReadiness, AuditLogResponse, ChannelSelectorResponse, DashboardSummary, PublishJob } from '../types'
 
@@ -66,6 +67,12 @@ export default function LogsPage() {
       </div>
 
       {message && <div style={noticeStyle('#d97706')}>{message}</div>}
+
+      <LocalPilotDemoReadinessStrip
+        readySessions={readySessions.length}
+        completedDryRuns={completedDryRuns}
+        failedTargets={failedTargets}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px' }}>
         <MetricCard icon={<Wifi size={17} />} label="Ready agent sessions" value={readySessions.length} tone="#16a34a" />
