@@ -39,6 +39,9 @@ describe('LogsPage evidence view', () => {
     expect(screen.getByText('no agent credential in browser')).toBeTruthy()
     expect(screen.getByText('Local Pilot Checklist')).toBeTruthy()
     expect(screen.getByText('.\\scripts\\demo-sales-local-pilot-ready.ps1 -StartPairedFbkit -StopExistingFbkit')).toBeTruthy()
+    expect(screen.getByText('Sales Demo Script')).toBeTruthy()
+    expect(screen.getByText(/paired to ZooPost Cloud/)).toBeTruthy()
+    expect(screen.getByText('Safety boundary visible')).toBeTruthy()
 
     await waitFor(() => {
       expect(screen.queryByText('100004822807900')).toBeNull()
