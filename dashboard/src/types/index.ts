@@ -336,3 +336,19 @@ export interface PublishJobProgress {
     data?: Record<string, unknown>
   }>
 }
+
+export interface AuditLogItem {
+  id: string
+  created_at: string
+  actor_user_id: string | null
+  actor_agent_id: string | null
+  action: string
+  resource_type: string
+  resource_id: string | null
+  data: Record<string, unknown>
+}
+
+export interface AuditLogResponse {
+  items: AuditLogItem[]
+  limit: number
+}
