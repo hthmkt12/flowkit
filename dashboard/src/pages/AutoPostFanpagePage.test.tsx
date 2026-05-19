@@ -229,6 +229,115 @@ describe('AutoPostFanpagePage', () => {
     expect(screen.queryByText('job-queu')).toBeNull()
   })
 
+  it('creates a Facebook fanpage channel from the selector panel and selects it', async () => {
+    const createdChannel = {
+      id: 'channel-new',
+      platform: 'facebook',
+      channel_type: 'fanpage',
+      username: 'new-page',
+      display_name: 'New Fanpage',
+      connection_status: 'offline',
+      safe_display_id: 'fanpage-new',
+    }
+    let includeCreated = false
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) {
+        return jsonResponse({
+          ...selectorResponse,
+          items: includeCreated
+            ? [{ ...createdChannel, live_guard_enabled: false, is_selectable: true, disabled_reason: null, supported_task_types: ['facebook.post_text'] }, ...selectorResponse.items]
+            : selectorResponse.items,
+        })
+      }
+      if (url === '/api/channels' && init?.method === 'POST') {
+        includeCreated = true
+        return jsonResponse(createdChannel)
+      }
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Tên Fanpage mới'), { target: { value: 'New Fanpage' } })
+    fireEvent.change(screen.getByLabelText('Username Fanpage mới'), { target: { value: 'new-page' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('+ THÊM TRANG CẦN ĐĂNG'))
+    })
+
+    await waitFor(() => expect(screen.getByText(/Đã thêm Fanpage New Fanpage/)).toBeTruthy())
+    const createdCheckbox = screen.getByLabelText(/New Fanpage/) as HTMLInputElement
+    expect(createdCheckbox).toBeTruthy()
+    expect(createdCheckbox.checked).toBe(true)
+    const createCall = calls.find(call => call.url === '/api/channels' && call.init?.method === 'POST')
+    expect(JSON.parse(String(createCall?.init?.body))).toMatchObject({
+      platform: 'facebook',
+      channel_type: 'fanpage',
+      display_name: 'New Fanpage',
+      username: 'new-page',
+    })
+  })
+
+  it('shows readiness diagnostics for selected channels that cannot dispatch', async () => {
+    const selectorWithOfflineChannel = {
+      ...selectorResponse,
+      items: [{ ...selectorResponse.items[0], connection_status: 'offline', disabled_reason: 'channel_not_ready' }],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorWithOfflineChannel)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+
+    expect(screen.getByText('Diagnostics dry-run')).toBeTruthy()
+    expect(screen.getByText('ZooPost Fanpage: Agent/kênh chưa ready cho dry-run.')).toBeTruthy()
+    expect(screen.getByText('Trạng thái: offline')).toBeTruthy()
+  })
+
+  it('shows safe agent diagnostics for targets that fail before dispatch', async () => {
+    const notReadyProgress = {
+      job_id: 'job-1',
+      status: 'failed',
+      counts: { total: 1, queued: 0, dispatching: 0, posted: 0, failed: 1, cancelled: 0 },
+      percent_complete: 100,
+      targets: [
+        { id: 'target-not-ready', channel_id: 'channel-1', status: 'failed', attempts: 0, external_post_id: null, external_post_url: null, error_code: 'agent_not_ready', error_message: 'No ready agent session for channel' },
+      ],
+      events: [{ id: 'event-not-ready', type: 'target.failed', severity: 'warning', message: 'No ready agent session for channel', target_id: 'target-not-ready', data: {} }],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorResponse)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-1', title: 'ZooPost dry-run', body: 'Xin chào [r]', syntax_mode: 'zoopost', status: 'draft' })
+      if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-1', status: 'queued', dry_run: true, created_at: '2026-05-16T10:30:00Z', targets: [{ id: 'target-not-ready', channel_id: 'channel-1', status: 'queued' }] })
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
+      if (url === '/api/publish-jobs/job-1/progress') return jsonResponse(notReadyProgress)
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+    await act(async () => {
+      fireEvent.click(screen.getByText('BẮT ĐẦU ĐĂNG BÀI (DRY-RUN)'))
+    })
+
+    await waitFor(() => expect(screen.getByText('target-not-ready')).toBeTruthy())
+    expect(screen.getByText('Kiểm tra Agent đang online, có capability publish-dry-run và Facebook profile khớp Fanpage.')).toBeTruthy()
+  })
+
   it('creates a dry-run job and renders backend progress', async () => {
     render(<AutoPostFanpagePage />)
 

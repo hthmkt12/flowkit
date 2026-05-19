@@ -47,7 +47,10 @@ async function checkStatus() {
     } else {
       // Get pending tasks count
       try {
-        const taskRes = await fetch(`${AGENT_API}/api/tasks/pending/count`, { headers });
+        const taskRes = await fetch(`${AGENT_API}/api/tasks/pending/count`, {
+          signal: AbortSignal.timeout(3000),
+          headers,
+        });
         const taskData = await taskRes.json();
         taskEl.textContent = `${taskData.count || 0} pending`;
       } catch {

@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle, Clock, Image, Link, Play, RefreshCw, Search, Video, Wand2 } from 'lucide-react'
 import { fetchAPI, postAPI } from '../api/client'
-import type { ChannelSelectorItem, ChannelSelectorResponse, ContentItem, ContentPreviewResult, MediaAsset, PublishJob, PublishJobProgress } from '../types'
+import type { ChannelSelectorItem, ChannelSelectorResponse, ContentItem, ContentPreviewResult, MediaAsset, PublishJob, PublishJobProgress, SocialChannel } from '../types'
 
 const PLATFORM_COLOR: Record<string, string> = {
   facebook: '#2563eb',
@@ -26,15 +26,41 @@ const DEFAULT_BODY = 'Xin chào [r]\n$SPIN=[Nội dung A | Nội dung B | Nội 
 const DEFAULT_TITLE = 'ZooPost dry-run'
 const PUBLISH_PROGRESS_POLL_MS = 3000
 const PUBLISH_TERMINAL_STATUSES = new Set(['posted', 'completed', 'failed', 'cancelled'])
+const PUBLISH_POLLING_STOP_STATUSES = new Set([...PUBLISH_TERMINAL_STATUSES, 'paused'])
 
 type SavedContentDraft = { id: string; title: string; body: string; mediaAssetIds: string[] }
+type ReadinessDiagnostic = { key: string; title: string; detail: string; status: string }
 
 function sameMediaAssets(left: string[], right: string[]) {
   return left.length === right.length && left.every((id, index) => id === right[index])
 }
 
+function channelReadinessDetail(channel: ChannelSelectorItem) {
+  const supportedTaskTypes = Array.isArray(channel.supported_task_types) ? channel.supported_task_types : []
+  if (channel.disabled_reason === 'channel_not_ready' || channel.connection_status !== 'ready') return 'Agent/kênh chưa ready cho dry-run.'
+  if (channel.disabled_reason === 'mvp_live_scope_facebook_fanpage_only') return 'Chỉ hỗ trợ Facebook Fanpage trong flow dry-run này.'
+  if (!supportedTaskTypes.some(taskType => taskType.startsWith('facebook.post_'))) return 'Kênh chưa khai báo capability publish cho Facebook post.'
+  if (channel.disabled_reason) return 'Kênh chưa sẵn sàng cho dry-run.'
+  return null
+}
+
+function selectedChannelDiagnostics(channels: ChannelSelectorItem[], selectedIds: string[]): ReadinessDiagnostic[] {
+  return channels
+    .filter(channel => selectedIds.includes(channel.id))
+    .map(channel => {
+      const detail = channelReadinessDetail(channel)
+      return detail ? { key: channel.id, title: channel.display_name, detail, status: channel.connection_status } : null
+    })
+    .filter((item): item is ReadinessDiagnostic => item !== null)
+}
+
 function isPublishTerminalStatus(status: string | null | undefined) {
   return status ? PUBLISH_TERMINAL_STATUSES.has(status) : false
+}
+
+function shouldStopPublishPolling(status: string | null | undefined, targets: Array<{ status: string }>) {
+  if (targets.some(target => target.status === 'dispatching')) return false
+  return status ? PUBLISH_POLLING_STOP_STATUSES.has(status) : false
 }
 
 export default function AutoPostFanpagePage() {
@@ -65,12 +91,16 @@ export default function AutoPostFanpagePage() {
   const [progressPollTick, setProgressPollTick] = useState(0)
   const [jobHistory, setJobHistory] = useState<PublishJob[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [jobActionPending, setJobActionPending] = useState<string | null>(null)
+  const [newChannelName, setNewChannelName] = useState('')
+  const [newChannelUsername, setNewChannelUsername] = useState('')
+  const [creatingChannel, setCreatingChannel] = useState(false)
 
-  const loadChannels = useCallback(async () => {
+  const loadChannels = useCallback(async (search = query) => {
     setLoading(true)
     try {
       const params = new URLSearchParams({ platform: 'facebook', channel_type: 'fanpage', limit: '100' })
-      if (query.trim()) params.set('search', query.trim())
+      if (search.trim()) params.set('search', search.trim())
       const data = await fetchAPI<ChannelSelectorResponse>(`/api/channels/selector?${params.toString()}`)
       setChannels(data.items)
       setMessage(null)
@@ -107,6 +137,7 @@ export default function AutoPostFanpagePage() {
   const selectedChannels = channels.filter(channel => selected.includes(channel.id))
   const selectedFanpages = selectedChannels.filter(channel => channel.channel_type === 'fanpage').length
   const selectedOther = selectedChannels.length - selectedFanpages
+  const readinessDiagnostics = selectedChannelDiagnostics(channels, selected)
   const normalizedMinDelay = Number.isFinite(minDelay) ? minDelay : 60
   const normalizedMaxDelay = Number.isFinite(maxDelay) ? maxDelay : 180
   const safeMinDelay = Math.max(60, Math.min(normalizedMinDelay, normalizedMaxDelay))
@@ -139,14 +170,17 @@ export default function AutoPostFanpagePage() {
 
   useEffect(() => { loadJobHistory() }, [loadJobHistory])
 
+  const jobTargetStatusKey = (progress?.targets ?? job?.targets ?? []).map(target => `${target.id}:${target.status}`).join('|')
+  const shouldStopCurrentJobPolling = job ? shouldStopPublishPolling(progress?.status ?? job.status, progress?.targets ?? job.targets) : true
+
   useEffect(() => {
-    if (!job || isPublishTerminalStatus(progress?.status ?? job.status)) return
+    if (!job || shouldStopCurrentJobPolling) return
     const timer = window.setTimeout(async () => {
       await refreshProgress(job.id)
       if (activeJobIdRef.current === job.id) setProgressPollTick(tick => tick + 1)
     }, PUBLISH_PROGRESS_POLL_MS)
     return () => window.clearTimeout(timer)
-  }, [job, progress?.status, progressPollTick, refreshProgress])
+  }, [job, shouldStopCurrentJobPolling, progressPollTick, refreshProgress, jobTargetStatusKey])
 
   async function saveContent() {
     const cached = savedContentRef.current
@@ -268,6 +302,62 @@ export default function AutoPostFanpagePage() {
     await refreshProgress(nextJob.id)
   }
 
+  async function runJobAction(action: 'pause' | 'cancel' | 'retry', targetId?: string) {
+    if (!job) return
+    const actionKey = targetId ? `${action}:${targetId}` : action
+    setJobActionPending(actionKey)
+    try {
+      const path = action === 'retry'
+        ? `/api/publish-jobs/${job.id}/targets/${targetId}/retry`
+        : `/api/publish-jobs/${job.id}/${action}`
+      const updated = await postAPI<PublishJob>(path)
+      activeJobIdRef.current = updated.id
+      setJob(updated)
+      await refreshProgress(updated.id)
+      await loadJobHistory()
+      setMessage(action === 'pause' ? 'Đã tạm dừng dry-run job.' : action === 'cancel' ? 'Đã hủy dry-run job.' : 'Đã đưa target thất bại vào hàng đợi retry.')
+    } catch {
+      setMessage(action === 'pause' ? 'Không tạm dừng được dry-run job.' : action === 'cancel' ? 'Không hủy được dry-run job.' : 'Không retry được target thất bại.')
+    } finally {
+      setJobActionPending(null)
+    }
+  }
+
+  async function createFanpageChannel() {
+    const displayName = newChannelName.trim()
+    if (!displayName) {
+      setMessage('Nhập tên Fanpage trước khi thêm kênh.')
+      return
+    }
+    setCreatingChannel(true)
+    try {
+      const created = await postAPI<SocialChannel>('/api/channels', {
+        platform: 'facebook',
+        channel_type: 'fanpage',
+        display_name: displayName,
+        username: newChannelUsername.trim() || null,
+      })
+      const createdChannelFallback: ChannelSelectorItem = {
+        ...created,
+        live_guard_enabled: false,
+        is_selectable: false,
+        disabled_reason: 'selector_refresh_pending',
+        supported_task_types: [],
+      }
+      setNewChannelName('')
+      setNewChannelUsername('')
+      setQuery('')
+      setChannels(prev => [createdChannelFallback, ...prev.filter(channel => channel.id !== created.id)])
+      setSelected(prev => prev.includes(created.id) ? prev : [...prev, created.id])
+      await loadChannels('')
+      setMessage(`Đã thêm Fanpage ${created.display_name}; selector sẽ hiển thị readiness từ backend.`)
+    } catch {
+      setMessage('Không tạo được Fanpage channel.')
+    } finally {
+      setCreatingChannel(false)
+    }
+  }
+
   function toggleChannel(channelId: string) {
     setSelected(prev => prev.includes(channelId) ? prev.filter(id => id !== channelId) : [...prev, channelId])
   }
@@ -350,7 +440,7 @@ export default function AutoPostFanpagePage() {
         <section style={panelStyle()}>
           <SectionTitle title="Cột 3 — Chọn Fanpage đăng bài" />
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button type="button" onClick={loadChannels} style={smallButtonStyle()}><RefreshCw size={13} /> TẢI LẠI</button>
+            <button type="button" onClick={() => loadChannels()} style={smallButtonStyle()}><RefreshCw size={13} /> TẢI LẠI</button>
             <button type="button" onClick={selectAllVisible} style={smallButtonStyle()}>CHỌN TẤT CẢ</button>
           </div>
           <div style={{ position: 'relative' }}>
@@ -374,7 +464,13 @@ export default function AutoPostFanpagePage() {
             {!loading && filteredChannels.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '12px', textAlign: 'center', padding: '24px' }}>Chưa có kênh phù hợp.</div>}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Đã chọn {selectedFanpages} Fanpage + {selectedOther} địa chỉ khác.</div>
-          <button type="button" disabled style={{ ...buttonStyle('#2563eb'), opacity: 0.7 }}>+ THÊM TRANG CẦN ĐĂNG</button>
+          {readinessDiagnostics.length > 0 && <ReadinessDiagnostics diagnostics={readinessDiagnostics} />}
+          <div style={{ display: 'grid', gap: '8px', border: '1px solid var(--border)', borderRadius: '12px', padding: '10px', background: 'var(--surface)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 800 }}>Thêm Fanpage cho dry-run</div>
+            <input aria-label="Tên Fanpage mới" value={newChannelName} onChange={event => setNewChannelName(event.target.value)} placeholder="Tên Fanpage" style={inputStyle()} />
+            <input aria-label="Username Fanpage mới" value={newChannelUsername} onChange={event => setNewChannelUsername(event.target.value)} placeholder="username tuỳ chọn" style={inputStyle()} />
+            <button type="button" onClick={createFanpageChannel} disabled={creatingChannel} style={{ ...buttonStyle('#2563eb'), opacity: creatingChannel ? 0.7 : 1 }}>{creatingChannel ? 'ĐANG THÊM...' : '+ THÊM TRANG CẦN ĐĂNG'}</button>
+          </div>
         </section>
       </div>
 
@@ -389,7 +485,22 @@ export default function AutoPostFanpagePage() {
 
       <JobHistoryPanel jobs={jobHistory} loading={historyLoading} onRefresh={loadJobHistory} onOpen={openHistoryJob} />
 
-      {job && <ProgressPreview job={job} progress={progress} channels={channels} />}
+      {job && <ProgressPreview job={job} progress={progress} channels={channels} actionPending={jobActionPending} onPause={() => runJobAction('pause')} onCancel={() => runJobAction('cancel')} onRetryTarget={targetId => runJobAction('retry', targetId)} />}
+    </div>
+  )
+}
+
+function ReadinessDiagnostics({ diagnostics }: { diagnostics: ReadinessDiagnostic[] }) {
+  return (
+    <div style={{ border: '1px solid rgba(217,119,6,0.35)', background: 'rgba(217,119,6,0.08)', borderRadius: '12px', padding: '10px', display: 'grid', gap: '6px' }}>
+      <div style={{ fontSize: '11px', fontWeight: 850, color: 'var(--yellow)' }}>Diagnostics dry-run</div>
+      {diagnostics.map(item => (
+        <div key={item.key} style={{ display: 'grid', gap: '3px', fontSize: '11px', color: 'var(--muted)' }}>
+          <strong style={{ color: 'var(--text)' }}>{item.title}: {item.detail}</strong>
+          <span>Trạng thái: {item.status}</span>
+        </div>
+      ))}
+      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Kiểm tra local agent online, capability publish-dry-run và Facebook profile khớp Fanpage.</div>
     </div>
   )
 }
@@ -411,6 +522,7 @@ function JobHistoryPanel({ jobs, loading, onRefresh, onOpen }: { jobs: PublishJo
               <option value="posted">Posted</option>
               <option value="completed">Completed</option>
               <option value="failed">Failed</option>
+              <option value="paused">Paused</option>
               <option value="cancelled">Cancelled</option>
             </select>
           </label>
@@ -445,7 +557,23 @@ function formatHistoryCreatedAt(value: string) {
   return `${pad(createdAt.getUTCDate())}/${pad(createdAt.getUTCMonth() + 1)}/${createdAt.getUTCFullYear()}, ${pad(createdAt.getUTCHours())}:${pad(createdAt.getUTCMinutes())}`
 }
 
-function ProgressPreview({ job, progress, channels }: { job: PublishJob; progress: PublishJobProgress | null; channels: ChannelSelectorItem[] }) {
+function ProgressPreview({
+  job,
+  progress,
+  channels,
+  actionPending,
+  onPause,
+  onCancel,
+  onRetryTarget,
+}: {
+  job: PublishJob
+  progress: PublishJobProgress | null
+  channels: ChannelSelectorItem[]
+  actionPending: string | null
+  onPause: () => void
+  onCancel: () => void
+  onRetryTarget: (targetId: string) => void
+}) {
   const counts = progress?.counts
   const total = counts?.total ?? job.targets.length
   const queued = counts?.queued ?? job.targets.filter(target => ['queued', 'retry'].includes(target.status)).length
@@ -455,6 +583,9 @@ function ProgressPreview({ job, progress, channels }: { job: PublishJob; progres
   const percent = progress?.percent_complete ?? (total === 0 ? 0 : Math.round((posted + failed) * 100 / total))
   const safeEventMessage = safeProgressMessage(progress?.events[0]?.message ?? null)
   const channelById = new Map(channels.map(channel => [channel.id, channel]))
+  const canPause = ['queued', 'dispatching'].includes(progress?.status ?? job.status)
+  const canCancel = !isPublishTerminalStatus(progress?.status ?? job.status)
+  const targetRows = progress?.targets ?? []
   return (
     <section style={panelStyle()}>
       <SectionTitle title="Modal — Tiến Trình Dry-run" />
@@ -475,9 +606,13 @@ function ProgressPreview({ job, progress, channels }: { job: PublishJob; progres
             <span style={chipStyle()}>Còn lại {Math.max(0, total - posted - failed)}</span>
           </div>
           {safeEventMessage && <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{safeEventMessage}</div>}
-          {progress && <TargetProgressDetails progress={progress} channelById={channelById} />}
+          {progress && <TargetProgressDetails progress={progress} channelById={channelById} actionPending={actionPending} onRetryTarget={onRetryTarget} />}
           <div style={{ fontSize: '12px', color: 'var(--yellow)' }}>Đây là dry-run preview. Live posting vẫn cần Safety Gate và phê duyệt riêng.</div>
-          <button type="button" disabled style={{ ...smallButtonStyle(), width: 'fit-content' }}>TẠM DỪNG</button>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button type="button" onClick={onPause} disabled={!canPause || actionPending !== null} style={{ ...smallButtonStyle(), width: 'fit-content', opacity: canPause && actionPending === null ? 1 : 0.55 }}>TẠM DỪNG</button>
+            <button type="button" onClick={onCancel} disabled={!canCancel || actionPending !== null} style={{ ...smallButtonStyle(), width: 'fit-content', opacity: canCancel && actionPending === null ? 1 : 0.55 }}>HỦY JOB</button>
+            {targetRows.some(target => target.status === 'failed') && <span style={{ fontSize: '11px', color: 'var(--muted)', alignSelf: 'center' }}>Retry từng target thất bại ở danh sách bên dưới.</span>}
+          </div>
         </div>
       </div>
     </section>
@@ -521,7 +656,22 @@ function progressStatusChipStyle(status: string): React.CSSProperties {
   return { ...chipStyle(), color, borderColor: color }
 }
 
-function TargetProgressDetails({ progress, channelById }: { progress: PublishJobProgress; channelById: Map<string, ChannelSelectorItem> }) {
+function targetReadinessHint(errorCode: string | null, errorMessage: string | null) {
+  if (errorCode === 'agent_not_ready' || errorMessage === 'No ready agent session for channel') return 'Kiểm tra Agent đang online, có capability publish-dry-run và Facebook profile khớp Fanpage.'
+  return null
+}
+
+function TargetProgressDetails({
+  progress,
+  channelById,
+  actionPending,
+  onRetryTarget,
+}: {
+  progress: PublishJobProgress
+  channelById: Map<string, ChannelSelectorItem>
+  actionPending: string | null
+  onRetryTarget: (targetId: string) => void
+}) {
   const failedTargets = progress.targets.filter(target => target.status === 'failed').length
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -536,6 +686,7 @@ function TargetProgressDetails({ progress, channelById }: { progress: PublishJob
           const channelSafeId = channel ? (channel.safe_display_id ?? 'ID an toàn chưa có') : target.channel_id
           const safeUrl = safeExternalPostUrl(target.external_post_url)
           const safeErrorMessage = safeTargetErrorMessage(target.error_message)
+          const readinessHint = targetReadinessHint(target.error_code, target.error_message)
           return (
             <div key={target.id} style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11px', background: 'var(--surface)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
@@ -550,7 +701,14 @@ function TargetProgressDetails({ progress, channelById }: { progress: PublishJob
               {safeUrl && <a href={safeUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', overflowWrap: 'anywhere' }}>{safeUrl}</a>}
               {target.external_post_url && !safeUrl && <div style={{ color: 'var(--muted)' }}>URL không hợp lệ</div>}
               {target.error_code && <div style={{ color: 'var(--red)', fontWeight: 800 }}>{target.error_code}</div>}
+              {readinessHint && <div style={{ color: 'var(--yellow)', overflowWrap: 'anywhere' }}>{readinessHint}</div>}
               {safeErrorMessage && <div style={{ color: 'var(--red)', overflowWrap: 'anywhere' }}>{safeErrorMessage}</div>}
+              {target.status === 'failed' && progress.status !== 'paused' && (
+                <button type="button" onClick={() => onRetryTarget(target.id)} disabled={actionPending !== null} style={{ ...smallButtonStyle(), width: 'fit-content', opacity: actionPending === null ? 1 : 0.55 }}>
+                  {actionPending === `retry:${target.id}` ? 'ĐANG RETRY...' : 'RETRY TARGET'}
+                </button>
+              )}
+              {target.status === 'failed' && progress.status === 'paused' && <div style={{ color: 'var(--muted)' }}>Job đang tạm dừng; hủy hoặc mở job khác trước khi retry.</div>}
             </div>
           )
         })}

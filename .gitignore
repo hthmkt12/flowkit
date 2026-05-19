@@ -15,7 +15,7 @@ extension/_metadata/
 
 # Local/generated AI tool configs
 .gemini/commands/
-.claude/skills/
+.claude/
 .opencode/skills/
 
 # Local/generated agent artifacts
