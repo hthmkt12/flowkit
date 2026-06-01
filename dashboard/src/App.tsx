@@ -4,7 +4,9 @@ import {
   BarChart3,
   FileText,
   FlaskConical,
+  Folder,
   Inbox,
+  Layers,
   LayoutDashboard,
   LogOut,
   MessageCircle,
@@ -19,6 +21,8 @@ import TasksPage from './pages/TasksPage'
 import LogsPage from './pages/LogsPage'
 import AutoPostFanpagePage from './pages/AutoPostFanpagePage'
 import AgentOnboardingPage from './pages/AgentOnboardingPage'
+import ProjectsPage from './pages/ProjectsPage'
+import CampaignsPage from './pages/CampaignsPage'
 
 type DemoNavItem = {
   to: string
@@ -32,6 +36,8 @@ type DemoNavItem = {
 const NAV: DemoNavItem[] = [
   { to: '/', icon: LayoutDashboard, label: 'Demo Dashboard', exact: true, element: <DashboardPage /> },
   { to: '/settings', icon: Settings, label: 'Connect Agent', exact: false, element: <AgentOnboardingPage /> },
+  { to: '/projects', icon: Folder, label: 'Autopilot Projects', exact: false, element: <ProjectsPage /> },
+  { to: '/campaigns', icon: Layers, label: 'Campaign Planner', exact: false, element: <CampaignsPage /> },
   { to: '/posts', icon: FileText, label: 'Fanpage Dry Run', exact: false, element: <AutoPostFanpagePage /> },
   { to: '/accounts', icon: Users, label: 'Local Profiles', exact: false, element: <AccountsPage /> },
   { to: '/tasks', icon: FlaskConical, label: 'Local Tasks', exact: false, element: <TasksPage /> },
