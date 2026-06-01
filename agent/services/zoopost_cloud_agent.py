@@ -1,4 +1,4 @@
-﻿"""ZooPost cloud dispatch adapter for local FBKit tasks."""
+"""ZooPost cloud dispatch adapter for local FBKit tasks."""
 
 from __future__ import annotations
 
@@ -67,8 +67,9 @@ async def run_gateway_loop():
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("ZooPost gateway loop disconnected: %s", exc)
+            logger.exception("ZooPost gateway loop disconnected")
             await asyncio.sleep(config.ZOOPOST_GATEWAY_POLL_INTERVAL)
+
 
 
 async def _run_gateway_session(state: GatewayConnectionState):

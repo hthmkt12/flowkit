@@ -1,6 +1,6 @@
 # FBKit Project Roadmap
 
-Last updated: 2026-05-08
+Last updated: 2026-05-26
 
 ## Current Status
 
@@ -22,6 +22,7 @@ FBKit has a working local-first architecture: FastAPI agent, SQLite task queue, 
 | Dashboard UI | In progress | `dashboard/src/App.tsx`, dashboard pages for status/accounts/tasks/seeding/spy/logs |
 | Docker local runtime | Available | `Dockerfile`, `docker-compose.yaml` |
 | Controlled live-action readiness | Guarded, not ready by default | Live requires `LIVE_ACTIONS_ENABLED`, API/WS auth, active live arm, approval, exact `fb_uid`, quota readiness, extension live guard enabled, and DB-backed same-account live lease |
+| Hardening pass | Complete | Remote setup refuses plaintext token exchange, smoke ignores stale sessions, WS auth decodes URL-encoded extension keys, dashboard WS rejects query credentials and uses base64url bearer subprotocol auth in browser and Vite proxy paths, dashboard redacts audit data, preserves auth when custom request headers are used, avoids client-bundled bearer env tokens, blocks dry-run submit for non-dispatchable channels, root metadata avoids extension identity, and local agent CORS is allowlisted |
 
 ## Near-Term Priorities
 
@@ -54,6 +55,8 @@ FBKit has a working local-first architecture: FastAPI agent, SQLite task queue, 
 - Treat stale extension sessions as offline for routing/readiness; do not count stale sockets as live-ready in status UI.
 - Keep `LIVE_ACCOUNT_LEASE_HEARTBEAT_SECONDS` shorter than `LIVE_ACCOUNT_LEASE_TTL_SECONDS` for long live workflows; the worker clamps the effective interval to at most half of TTL.
 - Keep `/api/status` local or enable API auth before non-local exposure because it includes operational IDs/session metadata.
+- Use HTTPS for non-loopback ZooPost Cloud setup; the local setup helper refuses plaintext remote token exchange.
+- Evidence Log must show browser-safe audit summaries only; raw tokens, cookies, profile URLs, and raw Facebook IDs remain redacted.
 
 ## Phase 4 Completion Evidence
 

@@ -7,11 +7,14 @@ Handles:
 4. Task worker lifecycle
 """
 import asyncio
+import base64
+import binascii
 import json
 import secrets
 import logging
 import signal
 import sys
+from urllib.parse import parse_qs, urlparse
 
 import uvicorn
 import websockets
@@ -21,7 +24,7 @@ from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent import config
-from agent.config import API_HOST, API_PORT, WS_AUTH_ENABLED, WS_API_KEY, WS_HOST, WS_PORT
+from agent.config import API_HOST, API_PORT, CORS_ALLOWED_ORIGINS, WS_AUTH_ENABLED, WS_API_KEY, WS_HOST, WS_PORT
 from agent.db.schema import init_db, close_db
 from agent.services.fb_client import get_fb_client
 from agent.services.event_bus import event_bus
@@ -104,16 +107,7 @@ async def lifespan(app: FastAPI):
 async def _handle_extension_ws(ws, path=None):
     """Handle WebSocket connection from Chrome extension."""
     if WS_AUTH_ENABLED:
-        request_path = path or getattr(ws, "path", "") or ""
-        query = request_path.split("?", 1)[1] if "?" in request_path else ""
-        params = {}
-        for pair in query.split("&"):
-            if not pair:
-                continue
-            k, _, v = pair.partition("=")
-            params[k] = v
-
-        ws_key = params.get("api_key") or params.get("token")
+        ws_key = _extension_ws_api_key(path or getattr(ws, "path", "") or "")
         if not ws_key or not secrets.compare_digest(ws_key, WS_API_KEY):
             logger.warning("Extension WS unauthorized from %s", ws.remote_address)
             await ws.close(code=4401, reason="Unauthorized")
@@ -141,6 +135,12 @@ async def _handle_extension_ws(ws, path=None):
         logger.info("Extension WebSocket disconnected")
 
 
+def _extension_ws_api_key(request_path: str) -> str | None:
+    params = parse_qs(urlparse(request_path).query, keep_blank_values=True)
+    values = params.get("api_key") or params.get("token") or []
+    return values[0] if values else None
+
+
 # ─── FastAPI App ──────────────────────────────────────────────
 
 app = FastAPI(
@@ -152,7 +152,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -186,12 +186,10 @@ app.include_router(strategies_router, prefix="/api", dependencies=api_dependenci
 
 @app.get("/")
 async def root():
-    client = get_fb_client()
     worker = get_worker_controller()
     return {
         "name": "FBKit Agent",
         "version": "1.0.0",
-        "extension": client.ws_stats,
         "worker": {
             "active_tasks": worker.active_count,
         },
@@ -248,8 +246,11 @@ async def get_status(_: None = Depends(require_api_key)):
 @app.websocket("/ws/dashboard")
 async def dashboard_ws(ws: WebSocket):
     """Real-time updates for dashboard UI."""
+    if _has_dashboard_query_credential(ws):
+        await ws.close(code=http_status.WS_1008_POLICY_VIOLATION)
+        return
     if WS_AUTH_ENABLED:
-        token = ws.query_params.get("api_key") or ws.query_params.get("token")
+        token = _dashboard_ws_api_key(ws)
         if not token or not secrets.compare_digest(token, WS_API_KEY):
             await ws.close(code=http_status.WS_1008_POLICY_VIOLATION)
             return
@@ -267,6 +268,30 @@ async def dashboard_ws(ws: WebSocket):
 
 
 # ─── Entrypoint ──────────────────────────────────────────────
+
+def _dashboard_ws_api_key(ws: WebSocket) -> str | None:
+    if _has_dashboard_query_credential(ws):
+        return None
+    protocols = ws.headers.get("sec-websocket-protocol", "")
+    for protocol in [part.strip() for part in protocols.split(",") if part.strip()]:
+        if protocol.startswith("bearer.b64."):
+            return _decode_base64url_token(protocol.removeprefix("bearer.b64."))
+        if protocol.startswith("bearer."):
+            return protocol.removeprefix("bearer.")
+    return None
+
+
+def _has_dashboard_query_credential(ws: WebSocket) -> bool:
+    return any(name in ws.query_params for name in ("token", "api_key", "credential", "authorization"))
+
+
+def _decode_base64url_token(encoded: str) -> str | None:
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        return base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+
 
 def main():
     uvicorn.run(

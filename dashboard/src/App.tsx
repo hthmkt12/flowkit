@@ -42,9 +42,9 @@ const NAV: DemoNavItem[] = [
   { to: '/accounts', icon: Users, label: 'Local Profiles', exact: false, element: <AccountsPage /> },
   { to: '/tasks', icon: FlaskConical, label: 'Local Tasks', exact: false, element: <TasksPage /> },
   { to: '/reports', icon: BarChart3, label: 'Evidence Log', exact: false, element: <LogsPage /> },
-  { to: '/seeding', icon: Zap, label: 'Seeding (future)', exact: false, element: <SeedingPage />, future: true },
-  { to: '/comments', icon: MessageCircle, label: 'Comments (future)', exact: false, element: <SeedingPage />, future: true },
-  { to: '/inbox', icon: Inbox, label: 'Inbox (future)', exact: false, element: <TasksPage />, future: true },
+  { to: '/seeding', icon: Zap, label: 'Seeding (Coming Soon)', exact: false, element: <SeedingPage />, future: true },
+  { to: '/comments', icon: MessageCircle, label: 'Comments (Coming Soon)', exact: false, element: <SeedingPage />, future: true },
+  { to: '/inbox', icon: Inbox, label: 'Inbox (Coming Soon)', exact: false, element: <TasksPage />, future: true },
 ]
 
 function PageTitle() {

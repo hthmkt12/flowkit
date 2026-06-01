@@ -37,10 +37,24 @@ def request_json(base_url: str, path: str, method: str = "GET", body: dict | Non
 
 def find_logged_in_uid(status: dict) -> str | None:
     sessions = status.get("extension", {}).get("sessions", [])
-    for session in sessions:
-        if session.get("logged_in") and session.get("fb_uid"):
-            return str(session["fb_uid"])
-    return None
+    fresh_sessions = [
+        session
+        for session in sessions
+        if session.get("logged_in") and session.get("fb_uid") and not is_stale_session(session)
+    ]
+    if not fresh_sessions:
+        return None
+    selected = min(fresh_sessions, key=lambda session: session.get("last_seen_age_s") or 0)
+    return str(selected["fb_uid"])
+
+
+def has_stale_logged_in_session(status: dict) -> bool:
+    sessions = status.get("extension", {}).get("sessions", [])
+    return any(session.get("logged_in") and session.get("fb_uid") and is_stale_session(session) for session in sessions)
+
+
+def is_stale_session(session: dict) -> bool:
+    return session.get("stale") is True or session.get("health") == "stale"
 
 
 def find_account_id(accounts: list[dict], fb_uid: str) -> str | None:
@@ -102,6 +116,9 @@ def run_smoke(base_url: str, content: str, api_key: str | None, poll_seconds: in
     status = request_json(base_url, "/api/status", api_key=api_key)
     fb_uid = find_logged_in_uid(status)
     if not fb_uid:
+        if has_stale_logged_in_session(status):
+            print("FAIL: only stale logged-in extension sessions found; refresh the extension heartbeat and retry", file=sys.stderr)
+            return 2
         print("FAIL: no logged-in extension session with fb_uid", file=sys.stderr)
         return 2
 

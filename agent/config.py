@@ -17,11 +17,22 @@ def _clamped_int(value: str | None, default: int, minimum: int, maximum: int) ->
     return max(minimum, min(maximum, parsed))
 
 
+def _csv(value: str | None, default: list[str]) -> list[str]:
+    if value is None:
+        return default
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or default
+
+
 # ─── Server ──────────────────────────────────────────────────
 API_HOST = os.environ.get("API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("API_PORT", "8100"))
 WS_HOST = os.environ.get("WS_HOST", "127.0.0.1")
 WS_PORT = int(os.environ.get("WS_PORT", "9222"))
+CORS_ALLOWED_ORIGINS = _csv(
+    os.environ.get("CORS_ALLOWED_ORIGINS"),
+    ["http://127.0.0.1:5173", "http://localhost:5173"],
+)
 
 # ─── Security / Auth ─────────────────────────────────────────
 API_AUTH_ENABLED = _is_truthy(os.environ.get("API_AUTH_ENABLED"), default=False)

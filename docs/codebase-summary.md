@@ -36,7 +36,11 @@ Docker support exists in `Dockerfile` and `docker-compose.yaml`. The compose ser
 
 ## API and Auth Surface
 
-All routers under `/api` use `require_api_key` from `agent/services/auth.py`. Auth is disabled by default (`API_AUTH_ENABLED=false`). When enabled, callers must send either `X-API-Key` or `Authorization: Bearer <key>`.
+All routers under `/api` use `require_api_key` from `agent/services/auth.py`. Auth is disabled by default (`API_AUTH_ENABLED=false`). When enabled, callers must send either `X-API-Key` or `Authorization: Bearer <key>`. The dashboard API client sends the browser token only when it is explicitly stored in local storage, including requests that pass custom headers. Do not use `VITE_` client env vars for bearer tokens; use the Vite-server-only `ZOOPOST_CLOUD_DEV_BEARER_TOKEN` proxy credential for local cloud smoke tests.
+
+Local agent CORS defaults are limited to `http://127.0.0.1:5173` and `http://localhost:5173`. Set `CORS_ALLOWED_ORIGINS` as a comma-separated allowlist if the dashboard dev origin changes.
+
+The extension WebSocket auth path accepts URL-encoded `api_key` or `token` query values, so generated keys containing `+`, `/`, `=`, or `%` authenticate consistently with REST headers. Dashboard WebSocket rejects credential-like query strings (`token`, `api_key`, `credential`, `authorization`) even when WebSocket auth is disabled, and sends browser credentials as `bearer.b64.<base64url-token>` subprotocols when auth is enabled, with `bearer.<token>` still accepted for compatibility.
 
 Verified route groups:
 
@@ -55,10 +59,10 @@ Top-level verified endpoints:
 
 | Endpoint | Current use |
 |---|---|
-| `GET /` | Basic app metadata plus extension and worker status |
+| `GET /` | Basic app metadata plus worker activity only; extension session identity stays under `/api/status` |
 | `GET /health` | Basic process check. Current response is `{"status":"ok"}`. |
 | `GET /api/status` | FBKit runtime, extension session including live guard state, worker `node_id`, process-local active live account IDs, active live account leases, scheduler, seeder, spy, notifier, session, Safety Gate auth readiness, active live arms, and task status details. |
-| `WS /ws/dashboard` | Dashboard live event feed. Uses WS token check only when `WS_AUTH_ENABLED=true`. |
+| `WS /ws/dashboard` | Dashboard live event feed. Uses bearer subprotocol token check only when `WS_AUTH_ENABLED=true`. |
 
 ## Safety Gate Behavior
 
@@ -133,6 +137,8 @@ While a live mutating task is processing, `WorkerController` refreshes the match
 
 The worker now waits for `FBClient.has_fresh_session` before claiming pending tasks. Stale-only sockets do not trigger queued work and therefore do not immediately fail tasks because an old browser session remained registered.
 
+The dry-run smoke helper also ignores stale logged-in sessions. If only stale logged-in sessions exist, it exits with a clear operator message instead of selecting an old `fb_uid`.
+
 When worker preflight fails, `_check_rate_limit()` records `last_rate_limit_error` for auth readiness, missing active arm, missing exact `fb_uid`, extension guard, malformed quota payload, or exhausted quota. `_fail_task_for_rate_limit()` persists that specific reason instead of always writing `Daily rate limit exceeded`.
 
 Live approval and live arm binding are server-owned. External `/tasks` creation strips `approved`, `_serverApproved`, `_quotaReserved`, and `_liveArmId`; only `POST /tasks/{task_id}/approve` can set `_serverApproved=true`, bind an active `_liveArmId`, and clear `dryRun` when live actions, API auth, WS auth, and a matching live arm are all active. Approval is atomically limited to `PENDING` tasks.
@@ -200,6 +206,7 @@ Verified in `agent/config.py`:
 | `API_PORT` | `8100` | FastAPI bind port |
 | `WS_HOST` | `127.0.0.1` | Extension WebSocket bind host |
 | `WS_PORT` | `9222` | Extension WebSocket bind port |
+| `CORS_ALLOWED_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | Browser origins allowed to call the local agent API |
 | `API_AUTH_ENABLED` | `false` | Enables REST API-key auth |
 | `API_KEY` | empty | API key used when REST auth is enabled |
 | `WS_AUTH_ENABLED` | follows `API_AUTH_ENABLED` | Enables extension/dashboard WebSocket token checks |
@@ -235,10 +242,12 @@ The dashboard is a Vite React app in `dashboard/`.
 | Verified file | Behavior |
 |---|---|
 | `dashboard/package.json` | Scripts: `dev`, `build`, `lint`, `test`, `preview`; runtime deps include React 19, React Router 7, and lucide-react; dev deps include Vite 8, Tailwind 4, Vitest, jsdom, and Testing Library for dashboard-local hook tests |
-| `dashboard/vite.config.ts` | Dev server port `5173`; routes ZooPost Cloud prefixes (`/api/channels`, `/api/content-items`, `/api/media-assets`, `/api/publish-jobs`, `/api/live-arms`, `/api/dashboard`, `/api/agent-installations`) and `/agent-gateway` to `127.0.0.1:8200`; keeps FBKit fallback `/api`, `/health`, and `/ws` on `127.0.0.1:8100`; supports server-side-only `ZOOPOST_CLOUD_DEV_BEARER_TOKEN`; Vitest uses `jsdom` via the local Vite config |
+| `dashboard/vite.config.ts` | Dev server port `5173`; routes ZooPost Cloud prefixes (`/api/channels`, `/api/content-items`, `/api/media-assets`, `/api/publish-jobs`, `/api/live-arms`, `/api/dashboard`, `/api/agent-installations`) and `/agent-gateway` to `127.0.0.1:8200`; keeps FBKit fallback `/api`, `/health`, and `/ws` on `127.0.0.1:8100`; supports server-side-only `ZOOPOST_CLOUD_DEV_BEARER_TOKEN` for REST and base64url WebSocket proxy auth; Vitest uses `jsdom` via the local Vite config |
 | `dashboard/src/App.tsx` | Routes: `/`, `/accounts`, `/tasks`, `/seeding`, `/spy`, `/logs` |
 | `dashboard/src/pages/DashboardPage.tsx` | Polls status/task/account/seeding/spy APIs and renders live event feed from dashboard WebSocket |
-| `dashboard/src/api/useWebSocket.test.ts` | Hook-level regression coverage for dashboard WebSocket reconnect, dual-consumer isolation, and unmount cleanup behavior with mocked `WebSocket` and fake timers |
+| `dashboard/src/pages/AutoPostFanpagePage.tsx` | Creates dry-run publish jobs only after selected channels pass selector readiness diagnostics |
+| `dashboard/src/api/client.test.ts` | Regression coverage for no-content responses, preserving bearer auth when callers pass custom headers, and ignoring `VITE_` browser bearer env tokens |
+| `dashboard/src/api/useWebSocket.test.ts` | Hook-level regression coverage for dashboard WebSocket reconnect, bearer base64url subprotocol encoding, dual-consumer isolation, and unmount cleanup behavior with mocked `WebSocket` and fake timers |
 
 Dashboard session types include `profile_id`, `profile_name`, `last_seen_age_s`, `stale`, and `health`. `SafetyGateStatus` counts only fresh non-stale extension sessions as connected/logged in, so stale sessions no longer make the dashboard look live-ready.
 

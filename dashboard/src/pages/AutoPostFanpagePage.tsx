@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle, Clock, Image, Link, Play, RefreshCw, Search, Video, Wand2 } from 'lucide-react'
 import { fetchAPI, postAPI } from '../api/client'
 import type { ChannelSelectorItem, ChannelSelectorResponse, ContentItem, ContentPreviewResult, MediaAsset, PublishJob, PublishJobProgress, SocialChannel } from '../types'
@@ -39,6 +39,7 @@ function channelReadinessDetail(channel: ChannelSelectorItem) {
   const supportedTaskTypes = Array.isArray(channel.supported_task_types) ? channel.supported_task_types : []
   if (channel.disabled_reason === 'channel_not_ready' || channel.connection_status !== 'ready') return 'Agent/kênh chưa ready cho dry-run.'
   if (channel.disabled_reason === 'mvp_live_scope_facebook_fanpage_only') return 'Chỉ hỗ trợ Facebook Fanpage trong flow dry-run này.'
+  if (!channel.is_selectable) return 'Kênh chưa sẵn sàng cho dry-run.'
   if (!supportedTaskTypes.some(taskType => taskType.startsWith('facebook.post_'))) return 'Kênh chưa khai báo capability publish cho Facebook post.'
   if (channel.disabled_reason) return 'Kênh chưa sẵn sàng cho dry-run.'
   return null
@@ -263,6 +264,10 @@ export default function AutoPostFanpagePage() {
       setMessage('Chọn thời gian hẹn giờ hợp lệ trước khi tạo dry-run job.')
       return
     }
+    if (readinessDiagnostics.length > 0) {
+      setMessage('Chưa thể tạo dry-run job vì có kênh chưa sẵn sàng.')
+      return
+    }
     setSubmitting(true)
     activeJobIdRef.current = null
     setJob(null)
@@ -434,7 +439,14 @@ export default function AutoPostFanpagePage() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '12px', fontSize: '12px', color: 'var(--muted)' }}>
             {useSchedule ? (validScheduledAt ? `Dry-run job hẹn lúc ${new Date(validScheduledAt).toLocaleString('vi-VN')}` : 'Chọn thời gian hẹn giờ hợp lệ.') : 'Job sẽ được tạo ở trạng thái queued/dry-run.'}
           </div>
-          <button type="button" disabled style={{ ...buttonStyle('#64748b'), opacity: 0.65 }}>CÀI ĐẶT SEEDING / PUSH FEED BACK</button>
+          <button
+            type="button"
+            disabled
+            style={{ ...buttonStyle('#64748b'), opacity: 0.65, cursor: 'not-allowed' }}
+            title="Seeding & Push Feedback settings are coming soon. Not available in the Phase 1 dry-run pilot."
+          >
+            CÀI ĐẶT SEEDING / PUSH FEED BACK (COMING SOON)
+          </button>
         </section>
 
         <section style={panelStyle()}>

@@ -24,6 +24,24 @@ function StatusPill({ label, active, safeWhenActive = true }: { label: string; a
   )
 }
 
+function InfoPill({ label, value, safe }: { label: string; value: string; safe: boolean }) {
+  return (
+    <span style={{
+      padding: '4px 8px',
+      borderRadius: '999px',
+      background: safe ? 'rgba(34, 197, 94, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+      border: `1px solid ${safe ? 'rgba(34, 197, 94, 0.3)' : 'rgba(245, 158, 11, 0.35)'}`,
+      color: safe ? 'var(--green)' : 'var(--yellow)',
+      fontSize: '10px',
+      fontWeight: 700,
+      textTransform: 'uppercase',
+      letterSpacing: '0.04em',
+    }}>
+      {label}: {value}
+    </span>
+  )
+}
+
 export default function SafetyGateStatus({ status }: SafetyGateStatusProps) {
   const safety = status?.safety_gate
   const safetyKnown = Boolean(safety)
@@ -31,6 +49,8 @@ export default function SafetyGateStatus({ status }: SafetyGateStatusProps) {
   const liveEnabled = safety?.live_actions_enabled ?? false
   const dryRunDefault = safety?.dry_run_default ?? true
   const approvalRequired = safety?.approval_required ?? true
+  const liveAuthReady = safety?.live_auth_ready ?? false
+  const activeLiveArmCount = Array.isArray(safety?.active_live_arms) ? safety.active_live_arms.length : 0
   const freshSessions = extension?.sessions?.filter(session => !session.stale).length ?? 0
   const connected = freshSessions > 0
   const loggedInSessions = extension?.sessions?.filter(session => session.logged_in && session.fb_uid && !session.stale).length ?? 0
@@ -95,6 +115,8 @@ export default function SafetyGateStatus({ status }: SafetyGateStatusProps) {
         <StatusPill label="live actions" active={liveEnabled} safeWhenActive={false} />
         <StatusPill label="dry-run default" active={dryRunDefault} />
         <StatusPill label="approval required" active={approvalRequired} />
+        <InfoPill label="live auth ready" value={liveAuthReady ? 'ready' : 'not ready'} safe={!liveEnabled || liveAuthReady} />
+        <InfoPill label="active live arms" value={activeLiveArmCount ? `${activeLiveArmCount} active` : 'none'} safe={activeLiveArmCount === 0} />
       </div>
     </div>
   )

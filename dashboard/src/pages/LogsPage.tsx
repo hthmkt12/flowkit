@@ -191,7 +191,50 @@ function MetricCard({ icon, label, value, tone }: { icon: ReactNode; label: stri
 function SectionTitle({ icon, title }: { icon: ReactNode; title: string }) { return <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 850, marginBottom: '12px' }}>{icon}{title}</div> }
 function EmptyRow({ title, meta }: { title: string; meta: string }) { return <div style={rowStyle()}><div><div style={{ fontWeight: 850 }}>{title}</div><div style={mutedStyle()}>{meta}</div></div></div> }
 function StatusPill({ ok, label }: { ok: boolean; label: string }) { return <span style={{ ...chipStyle(ok ? '#16a34a' : '#d97706'), whiteSpace: 'nowrap' }}>{label}</span> }
-function safeDataLabel(data: Record<string, unknown>) { const keys = Object.keys(data); return keys.length ? keys.map(key => `${key}=${String(data[key])}`).join(', ') : '-' }
+const SAFE_AUDIT_DATA_KEYS = new Set(['dry_run', 'status', 'resource_type', 'action', 'result', 'error_code', 'channel_type', 'platform', 'limit', 'count'])
+const SENSITIVE_KEY_PATTERN = /(token|secret|cookie|credential|authorization|password|bearer|profile_url|external_id|fb_uid|facebook_id|page_id|user_id)/i
+const SENSITIVE_VALUE_PATTERNS = [
+  /https?:\/\/(?:www\.)?(?:facebook|fb)\.com\/\S*/i,
+  /\bbearer\s+[a-z0-9._~+/=-]+/i,
+  /\b(?:token|secret|cookie|credential)[\w .:=/-]*[a-z0-9._~+/=-]{6,}/i,
+  /\b\d{12,}\b/,
+]
+
+function isSensitiveAuditValue(value: string) {
+  return SENSITIVE_VALUE_PATTERNS.some(pattern => pattern.test(value))
+}
+
+function safeAuditValue(value: unknown) {
+  if (typeof value === 'boolean') return String(value)
+  if (typeof value === 'number') {
+    const numericValue = String(value)
+    return isSensitiveAuditValue(numericValue) ? null : numericValue
+  }
+  if (typeof value !== 'string') return null
+  if (isSensitiveAuditValue(value)) return null
+  return value.length > 80 ? `${value.slice(0, 77)}...` : value
+}
+
+function safeDataLabel(data: Record<string, unknown>) {
+  const labels: string[] = []
+  let redacted = 0
+
+  for (const [key, value] of Object.entries(data)) {
+    if (!SAFE_AUDIT_DATA_KEYS.has(key) || SENSITIVE_KEY_PATTERN.test(key)) {
+      redacted += 1
+      continue
+    }
+    const safeValue = safeAuditValue(value)
+    if (safeValue === null) {
+      redacted += 1
+      continue
+    }
+    labels.push(`${key}=${safeValue}`)
+  }
+
+  if (redacted > 0) labels.push(`redacted_fields=${redacted}`)
+  return labels.length ? labels.join(', ') : '-'
+}
 function formatTime(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Invalid time' : date.toLocaleString('vi-VN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
 function panelStyle(): CSSProperties { return { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' } }
 function rowStyle(): CSSProperties { return { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: '10px', background: 'var(--surface)' } }

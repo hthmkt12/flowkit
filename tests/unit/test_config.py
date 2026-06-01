@@ -1,6 +1,6 @@
 """Tests for config helpers."""
 import pytest
-from agent.config import _is_truthy
+from agent.config import _csv, _is_truthy
 
 
 class TestIsTruthy:
@@ -35,3 +35,11 @@ class TestIsTruthy:
 
     def test_none_default_true(self):
         assert _is_truthy(None, default=True) is True
+
+
+class TestCsv:
+    def test_none_returns_default(self):
+        assert _csv(None, ["http://127.0.0.1:5173"]) == ["http://127.0.0.1:5173"]
+
+    def test_csv_trims_and_drops_empty_items(self):
+        assert _csv(" http://a.test, ,http://b.test ", []) == ["http://a.test", "http://b.test"]

@@ -304,6 +304,32 @@ describe('AutoPostFanpagePage', () => {
     expect(screen.getByText('Trạng thái: offline')).toBeTruthy()
   })
 
+  it('blocks dry-run job creation when a selected channel is not dispatchable', async () => {
+    const selectorWithOfflineChannel = {
+      ...selectorResponse,
+      items: [{ ...selectorResponse.items[0], connection_status: 'offline', disabled_reason: 'channel_not_ready' }],
+    }
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.startsWith('/api/channels/selector')) return jsonResponse(selectorWithOfflineChannel)
+      if (url === '/api/media-assets') return jsonResponse([])
+      if (url === '/api/publish-jobs?limit=5') return jsonResponse([])
+      if (url === '/api/content-items') return jsonResponse({ id: 'content-should-not-save' })
+      if (url === '/api/publish-jobs' && init?.method === 'POST') return jsonResponse({ id: 'job-should-not-create' })
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(`missing mock ${url}`) } as Response)
+    }))
+
+    render(<AutoPostFanpagePage />)
+
+    expect(await screen.findByText('ZooPost Fanpage')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/ZooPost Fanpage/))
+    fireEvent.click(screen.getByText(/DRY-RUN\)/))
+
+    await waitFor(() => expect(screen.getByText(/Chưa thể tạo dry-run job/)).toBeTruthy())
+    expect(calls.some(call => call.url === '/api/content-items')).toBe(false)
+    expect(calls.some(call => call.url === '/api/publish-jobs' && call.init?.method === 'POST')).toBe(false)
+  })
+
   it('shows safe agent diagnostics for targets that fail before dispatch', async () => {
     const notReadyProgress = {
       job_id: 'job-1',

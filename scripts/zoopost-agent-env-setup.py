@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import ipaddress
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -26,6 +28,7 @@ def main() -> int:
 
 
 def exchange_token(cloud_url: str, installation_id: str, registration_token: str, bearer_token: str | None) -> str:
+    require_secure_cloud_url(cloud_url)
     body = json.dumps({"registration_token": registration_token}).encode()
     url = f"{cloud_url.rstrip('/')}/agent-gateway/setup/installations/{installation_id}/exchange"
     headers = {"Content-Type": "application/json", "User-Agent": "zoopost-agent-env-setup/1"}
@@ -42,6 +45,24 @@ def exchange_token(cloud_url: str, installation_id: str, registration_token: str
     if not isinstance(credential, str) or not credential:
         raise SystemExit("Token exchange response did not include a credential.")
     return credential
+
+
+def require_secure_cloud_url(cloud_url: str):
+    parsed = urllib.parse.urlparse(cloud_url.rstrip("/"))
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and _is_loopback_host(parsed.hostname):
+        return
+    raise SystemExit("Refusing unsupported or plaintext remote ZooPost Cloud URL. Use https unless targeting localhost.")
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if hostname in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(hostname or "").is_loopback
+    except ValueError:
+        return False
 
 
 def print_env_commands(cloud_url: str, installation_id: str, credential: str):

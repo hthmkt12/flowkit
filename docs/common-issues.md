@@ -52,6 +52,36 @@ Expected status signal:
 - at least one session with a non-empty `fb_uid` before account-targeted live dispatch
 - worker/scheduler task stats present
 
+If dashboard requests fail from a non-default dev host, add that origin to `CORS_ALLOWED_ORIGINS` instead of using a wildcard.
+
+## Issue: Root endpoint must not expose extension identity
+
+### Symptoms
+
+- `GET /` returns extension session details.
+- Response includes raw `fb_uid`, `profile_id`, or `profile_name`.
+
+### Root Cause
+
+- The root endpoint is a public basic metadata endpoint.
+- Extension session identity belongs behind `/api/status`, which is protected when `API_AUTH_ENABLED=true`.
+
+### Common Triggers
+
+- Reusing `/api/status` payloads for top-level health or metadata responses.
+- Adding status fields to `/` for convenience during local debugging.
+
+### Solutions
+
+- Keep `/` limited to app metadata and non-sensitive worker activity.
+- Use `/health` for process readiness.
+- Use `/api/status` for extension/session details.
+
+### Verification
+
+- `python -m pytest tests\unit\test_health.py -q` passes.
+- `GET /` response does not contain `fb_uid`, `profile_id`, or `profile_name`.
+
 ## Issue: Extension is not connected
 
 ### Symptoms
@@ -82,6 +112,88 @@ Expected status signal:
 
 - `GET /api/status` returns `extension.connected=true`.
 - At least one session reports `logged_in=true` and non-empty `fb_uid`.
+
+## Issue: Dry-run smoke sees only stale logged-in sessions
+
+### Symptoms
+
+- Dry-run smoke exits before creating a job.
+- Error says only stale logged-in extension sessions were found.
+- `/api/status` contains a logged-in `fb_uid`, but the session is marked stale.
+
+### Root Cause
+
+- The extension heartbeat is no longer fresh enough for safe routing.
+- Stale sessions are treated as offline for smoke selection and worker readiness.
+
+### Common Triggers
+
+- Facebook tab was closed, suspended, or switched profiles.
+- Chrome extension reloaded but old session metadata remained visible briefly.
+- Agent has not received a fresh heartbeat from the active tab.
+
+### Solutions
+
+- Open or refresh the signed-in Facebook tab.
+- Reload the Chrome extension if heartbeat does not resume.
+- Re-run the smoke only after `/api/status` shows a non-stale logged-in session.
+
+### Verification
+
+- `GET /api/status` shows `logged_in=true`, non-empty `fb_uid`, and `stale=false`.
+- `python scripts/fbkit-dry-run-smoke.py` selects the fresh session.
+
+## Issue: ZooPost setup refuses plaintext remote URL
+
+### Symptoms
+
+- `scripts/zoopost-agent-env-setup.py` exits before token exchange.
+- Error says plaintext remote ZooPost Cloud URL is refused.
+
+### Root Cause
+
+- The setup helper sends a one-time registration token and optional bearer token.
+- Non-loopback `http://` URLs could expose credentials in transit.
+
+### Common Triggers
+
+- Running setup against `http://staging.example.com`.
+- Copying a local command and replacing only the hostname.
+
+### Solutions
+
+- Use `https://` for remote ZooPost Cloud setup.
+- Keep `http://127.0.0.1` or `http://localhost` only for local loopback development.
+
+### Verification
+
+- Remote setup uses HTTPS.
+- Loopback setup still works for local development.
+
+## Issue: Dashboard realtime disconnects when auth key contains special characters
+
+### Symptoms
+
+- Browser console shows a WebSocket constructor/protocol error before the request reaches the server.
+- Dashboard realtime stays offline even though REST API calls authenticate.
+- The local API or ZooPost bearer key contains `/`, `=`, or other non-token characters.
+
+### Root Cause
+
+- Browser WebSocket subprotocol values allow a narrower character set than REST bearer headers.
+- Dashboard credentials must not be sent in query strings, so the client sends `bearer.b64.<base64url-token>` and the servers decode it.
+
+### Solutions
+
+- Use the current dashboard build so `dashboardWebSocketProtocols()` emits the base64url bearer subprotocol.
+- Keep query-string credentials disabled for dashboard realtime, even in local unauthenticated mode.
+- Leave existing `bearer.<token>` support only for compatibility with older clients or tests.
+
+### Verification
+
+- `npm run test -- --run src/api/useWebSocket.test.ts` passes from `flowkit/dashboard`.
+- `python -m pytest tests\unit\test_auth.py -q` passes from `flowkit`.
+- `python -m pytest tests\contract\test_dashboard_api.py -q` passes from `zoopost-cloud`.
 
 ## Issue: Live task stays dry-run
 

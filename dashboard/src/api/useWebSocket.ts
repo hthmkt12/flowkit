@@ -2,9 +2,15 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import type { WSEvent } from '../types'
 import { getZooPostBearerToken } from './client'
 
+function base64UrlEncode(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('')
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/u, '')
+}
+
 export function dashboardWebSocketProtocols(): string[] | undefined {
   const token = getZooPostBearerToken()
-  return token ? [`bearer.${token}`] : undefined
+  return token ? [`bearer.b64.${base64UrlEncode(token)}`] : undefined
 }
 
 export function useWebSocket() {

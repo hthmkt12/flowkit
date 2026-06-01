@@ -130,10 +130,42 @@ def test_find_logged_in_session_returns_only_logged_in_uid():
     assert uid == "100004822807900"
 
 
+def test_find_logged_in_session_skips_stale_and_selects_fresh_uid():
+    script = _load_script()
+
+    uid = script.find_logged_in_uid({
+        "extension": {
+            "sessions": [
+                {"fb_uid": "stale-first", "logged_in": True, "stale": True, "last_seen_age_s": 120},
+                {"fb_uid": "fresh-older", "logged_in": True, "stale": False, "last_seen_age_s": 15},
+                {"fb_uid": "fresh-newer", "logged_in": True, "health": "online", "last_seen_age_s": 2},
+            ]
+        }
+    })
+
+    assert uid == "fresh-newer"
+
+
 def test_find_logged_in_session_rejects_missing_logged_in_uid():
     script = _load_script()
 
     assert script.find_logged_in_uid({"extension": {"sessions": []}}) is None
+
+
+def test_find_logged_in_session_rejects_only_stale_logged_in_uid():
+    script = _load_script()
+
+    status = {
+        "extension": {
+            "sessions": [
+                {"fb_uid": "stale-a", "logged_in": True, "stale": True},
+                {"fb_uid": "stale-b", "logged_in": True, "health": "stale"},
+            ]
+        }
+    }
+
+    assert script.find_logged_in_uid(status) is None
+    assert script.has_stale_logged_in_session(status) is True
 
 
 def test_completed_task_requires_dry_run_result():
@@ -160,6 +192,19 @@ def test_run_smoke_returns_2_when_no_logged_in_extension(monkeypatch):
     monkeypatch.setattr(script, "request_json", fake_request_json)
 
     assert script.run_smoke("http://agent", "hello", "test-key", 1) == 2
+
+
+def test_run_smoke_returns_2_with_clear_message_when_only_stale_sessions(monkeypatch, capsys):
+    script = _load_script()
+
+    def fake_request_json(base_url, path, method="GET", body=None, api_key=None):
+        assert path == "/api/status"
+        return {"extension": {"sessions": [{"logged_in": True, "fb_uid": "fb-stale", "stale": True}]}}
+
+    monkeypatch.setattr(script, "request_json", fake_request_json)
+
+    assert script.run_smoke("http://agent", "hello", None, 1) == 2
+    assert "only stale logged-in extension sessions" in capsys.readouterr().err
 
 
 def test_run_smoke_uses_existing_account_and_completes(monkeypatch, capsys):

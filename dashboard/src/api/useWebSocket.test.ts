@@ -123,7 +123,17 @@ describe('useWebSocket', () => {
   it('uses bearer subprotocol when a browser demo token is configured', () => {
     window.localStorage.setItem('zoopostBearerToken', 'demo-token')
 
-    expect(dashboardWebSocketProtocols()).toEqual(['bearer.demo-token'])
+    expect(dashboardWebSocketProtocols()).toEqual(['bearer.b64.ZGVtby10b2tlbg'])
+    vi.clearAllTimers()
+  })
+
+  it('encodes local API keys into browser-safe WebSocket subprotocols', () => {
+    window.localStorage.setItem('zoopostBearerToken', 'abc+123/==')
+
+    const protocols = dashboardWebSocketProtocols()
+
+    expect(protocols).toEqual(['bearer.b64.YWJjKzEyMy89PQ'])
+    expect(protocols?.[0]).toMatch(/^[A-Za-z0-9._-]+$/u)
     vi.clearAllTimers()
   })
 

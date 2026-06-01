@@ -114,3 +114,66 @@ class TestRequireApiKey:
             with pytest.raises(HTTPException) as exc:
                 await require_api_key(x_api_key=None, authorization=None)
             assert exc.value.status_code == 401
+
+
+class TestExtensionWebSocketApiKey:
+    def test_extension_ws_api_key_decodes_url_encoded_special_characters(self):
+        from agent.main import _extension_ws_api_key
+
+        assert _extension_ws_api_key("/extension?api_key=a%2Bb%2Fc%3D%25") == "a+b/c=%"
+
+    def test_extension_ws_api_key_accepts_token_fallback(self):
+        from agent.main import _extension_ws_api_key
+
+        assert _extension_ws_api_key("/extension?token=a%2Fb%3D") == "a/b="
+
+
+class TestDashboardWebSocketApiKey:
+    def test_dashboard_ws_api_key_reads_bearer_subprotocol(self):
+        from types import SimpleNamespace
+
+        from agent.main import _dashboard_ws_api_key
+
+        ws = SimpleNamespace(
+            query_params={},
+            headers={"sec-websocket-protocol": "chat, bearer.dashboard-key"},
+        )
+
+        assert _dashboard_ws_api_key(ws) == "dashboard-key"
+
+    def test_dashboard_ws_api_key_decodes_base64url_bearer_subprotocol(self):
+        from types import SimpleNamespace
+
+        from agent.main import _dashboard_ws_api_key
+
+        ws = SimpleNamespace(
+            query_params={},
+            headers={"sec-websocket-protocol": "bearer.b64.YWJjKzEyMy89PQ"},
+        )
+
+        assert _dashboard_ws_api_key(ws) == "abc+123/=="
+
+    def test_dashboard_ws_api_key_ignores_invalid_base64url_bearer_subprotocol(self):
+        from types import SimpleNamespace
+
+        from agent.main import _dashboard_ws_api_key
+
+        ws = SimpleNamespace(
+            query_params={},
+            headers={"sec-websocket-protocol": "bearer.b64.////"},
+        )
+
+        assert _dashboard_ws_api_key(ws) is None
+
+    @pytest.mark.parametrize("query_name", ["token", "api_key", "credential", "authorization"])
+    def test_dashboard_ws_api_key_rejects_query_credentials(self, query_name):
+        from types import SimpleNamespace
+
+        from agent.main import _dashboard_ws_api_key
+
+        ws = SimpleNamespace(
+            query_params={query_name: "dashboard-key"},
+            headers={"sec-websocket-protocol": "bearer.dashboard-key"},
+        )
+
+        assert _dashboard_ws_api_key(ws) is None

@@ -41,15 +41,24 @@ function relativeTime(iso: string): string {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function StatBadge({ label, value, color }: { label: string; value: number; color: string }) {
+function StatBadge({ label, value, color, future }: { label: string; value: number; color: string; future?: boolean }) {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       background: 'var(--surface)', borderRadius: 6, padding: '6px 12px',
       border: '1px solid var(--border)', minWidth: 60,
-    }}>
-      <span style={{ fontSize: 18, fontWeight: 700, color }}>{value}</span>
-      <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>{label}</span>
+      opacity: future ? 0.45 : 1,
+      cursor: future ? 'not-allowed' : 'default',
+    }} title={future ? `${label} (Coming Soon)` : undefined}>
+      <span style={{ fontSize: 18, fontWeight: 700, color: future ? 'var(--muted)' : color }}>{future ? '—' : value}</span>
+      <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' }}>
+        {label}
+        {future && (
+          <span style={{ fontSize: 8, textTransform: 'none', color: 'var(--muted)', display: 'block', opacity: 0.8 }}>
+            (soon)
+          </span>
+        )}
+      </span>
     </div>
   )
 }
@@ -148,10 +157,10 @@ function AccountRow({
       {/* Daily counters */}
       <td style={{ padding: '12px 16px' }}>
         <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--muted)' }}>
-          <span>👍 {account.daily_likes ?? 0}</span>
-          <span>💬 {account.daily_comments ?? 0}</span>
-          <span>↗ {account.daily_posts ?? 0}</span>
-          <span>✉ {account.daily_messages ?? 0}</span>
+          <span style={{ color: 'var(--text)', fontWeight: 600 }} title="Today's posts">↗ {account.daily_posts ?? 0}</span>
+          <span style={{ opacity: 0.38 }} title="Likes (Coming Soon)">👍 —</span>
+          <span style={{ opacity: 0.38 }} title="Comments (Coming Soon)">💬 —</span>
+          <span style={{ opacity: 0.38 }} title="Messages (Coming Soon)">✉ —</span>
         </div>
       </td>
 
@@ -216,10 +225,10 @@ function ActivityDrawer({ account, onClose }: { account: Account; onClose: () =>
       {/* Stats */}
       <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <StatBadge label="Likes" value={account.daily_likes ?? 0} color="var(--blue)" />
-          <StatBadge label="Comments" value={account.daily_comments ?? 0} color="var(--purple)" />
           <StatBadge label="Posts" value={account.daily_posts ?? 0} color="var(--accent)" />
-          <StatBadge label="Messages" value={account.daily_messages ?? 0} color="var(--yellow)" />
+          <StatBadge label="Likes" value={account.daily_likes ?? 0} color="var(--blue)" future={true} />
+          <StatBadge label="Comments" value={account.daily_comments ?? 0} color="var(--purple)" future={true} />
+          <StatBadge label="Messages" value={account.daily_messages ?? 0} color="var(--yellow)" future={true} />
         </div>
         <div style={{ marginTop: 10, fontSize: 11, color: 'var(--muted)' }}>
           {account.email && <div>📧 {account.email}</div>}
@@ -406,11 +415,10 @@ export default function AccountsPage() {
   }
 
   async function handleStatusChange(id: string, status: string) {
-    const updated = await (await fetch(`/api/accounts/${id}`, {
+    const updated = await fetchAPI<Account>(`/api/accounts/${id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
-    })).json() as Account
+    })
     setAccounts(prev => prev.map(a => a.id === id ? updated : a))
     if (selected?.id === id) setSelected(updated)
   }
