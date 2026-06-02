@@ -38,6 +38,9 @@ export default function TargetRegistryList({
         const isBlocked = target.status === 'blocked'
         const readDetail = readinessLabel(target.readiness)
 
+        const postUrl = typeof target.rules?.post_url === 'string' ? target.rules.post_url : undefined
+        const profileUrl = typeof target.rules?.profile_url === 'string' ? target.rules.profile_url : undefined
+
         return (
           <div
             key={target.id}
@@ -63,11 +66,11 @@ export default function TargetRegistryList({
                   {target.rules && target.rules.max_posts_per_day !== undefined && (
                     <span>Daily Max: {String(target.rules.max_posts_per_day)}</span>
                   )}
-                  {target.rules && target.rules.post_url && (
-                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '250px' }} title={target.rules.post_url}>Post URL: {target.rules.post_url}</span>
+                  {postUrl && (
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '250px' }} title={postUrl}>Post URL: {postUrl}</span>
                   )}
-                  {target.rules && target.rules.profile_url && (
-                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '250px' }} title={target.rules.profile_url}>Profile URL: {target.rules.profile_url}</span>
+                  {profileUrl && (
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '250px' }} title={profileUrl}>Profile URL: {profileUrl}</span>
                   )}
                   {target.last_seen_at && <span>Seen: {new Date(target.last_seen_at).toLocaleTimeString('vi-VN')}</span>}
                 </div>
