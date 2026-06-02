@@ -411,6 +411,8 @@ def _build_task_payload(dispatch: dict[str, Any], expected_fb_uid: str) -> dict[
         payload["zoopostMediaRefs"] = media
     if dispatch.get("target"):
         payload["target"] = dispatch["target"]
+    if dispatch.get("projectId"):
+        payload["projectId"] = dispatch["projectId"]
     return payload
 
 

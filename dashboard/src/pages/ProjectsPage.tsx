@@ -1,10 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, ShieldAlert, FolderOpen, UserPlus } from 'lucide-react'
+import { Plus, ShieldAlert, FolderOpen, UserPlus, Settings, Target, Layers, Shield, FileText } from 'lucide-react'
 import { fetchAPI, postAPI, patchAPI } from '../api/client'
 import ProjectList from '../components/projects/ProjectList'
 import TargetRegistryList from '../components/projects/TargetRegistryList'
 import type { Project, TargetRegistry } from '../types/projects'
 import type { SocialChannel } from '../types'
+import OverviewPolicyTab from '../components/projects/OverviewPolicyTab'
+import CampaignsRunsTab from '../components/projects/CampaignsRunsTab'
+import ApprovalQueueTab from '../components/projects/ApprovalQueueTab'
+import EvidenceLogsTab from '../components/projects/EvidenceLogsTab'
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -16,6 +20,7 @@ export default function ProjectsPage() {
   const [loadingTargets, setLoadingTargets] = useState(false)
   const [actionPending, setActionPending] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'overview' | 'targets' | 'campaigns' | 'approval' | 'evidence'>('overview')
 
   // Form states for project creation
   const [newProjectName, setNewProjectName] = useState('')
@@ -289,83 +294,144 @@ export default function ProjectsPage() {
 
         {selectedProject ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <section style={panelStyle()}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
-                <div>
-                  <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Chi tiết dự án</div>
-                  <div style={{ fontSize: '18px', fontWeight: 850 }}>{selectedProject.name}</div>
-                </div>
+            {/* Unified Project Cockpit Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap', background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 800 }}>BẢNG ĐIỀU KHIỂN DỰ ÁN (PROJECT COCKPIT)</div>
+                <div style={{ fontSize: '20px', fontWeight: 900, marginTop: '2px' }}>{selectedProject.name}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 {selectedProject.kill_switch_enabled && (
                   <span style={ksPillStyle()}>
-                    <ShieldAlert size={14} /> KILL SWITCH ĐANG BẬT
+                    <ShieldAlert size={14} /> EMERGENCY KILL SWITCH ACTIVE
                   </span>
                 )}
+                <span style={{ fontSize: '11px', fontWeight: 800, padding: '4px 10px', borderRadius: '6px', background: 'var(--surface)', border: `1px solid ${selectedProject.status === 'active' ? 'var(--green)' : 'var(--red)'}`, color: selectedProject.status === 'active' ? 'var(--green)' : 'var(--red)' }}>
+                  {selectedProject.status.toUpperCase()}
+                </span>
               </div>
+            </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px', fontSize: '12px' }}>
-                <div>
-                  <div style={{ color: 'var(--muted)', fontWeight: 800 }}>Chính sách Autopilot</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-                    <div>Live Actions: <strong>{selectedProject.live_enabled ? 'CHO PHÉP' : 'TẮT (CHỈ DRY-RUN)'}</strong></div>
-                    <div>Yêu cầu Dry-run: <strong>{selectedProject.dry_run_required ? 'BẮT BUỘC' : 'TÙY CHỌN'}</strong></div>
-                    <div>Autopilot Mode: <strong>{selectedProject.default_autopilot_mode.toUpperCase()}</strong></div>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--muted)', fontWeight: 800 }}>Niche / Phân loại</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-                    <div>Niche: <strong>{selectedProject.niche || 'CHƯA PHÂN LOẠI'}</strong></div>
-                    <div>Trạng thái: <strong>{selectedProject.status.toUpperCase()}</strong></div>
-                    <div>Allowed Targets: <strong>{selectedProject.allowed_target_types.join(', ').toUpperCase()}</strong></div>
-                  </div>
-                </div>
-              </div>
-            </section>
+            {/* Sleek Tabs Bar */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', gap: '4px', overflowX: 'auto', paddingBottom: '0' }}>
+              <button
+                type="button"
+                onClick={() => setActiveTab('overview')}
+                style={tabButtonStyle(activeTab === 'overview')}
+              >
+                <Settings size={13} /> Overview & Policy
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('targets')}
+                style={tabButtonStyle(activeTab === 'targets')}
+              >
+                <Target size={13} /> Target Registry ({targets.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('campaigns')}
+                style={tabButtonStyle(activeTab === 'campaigns')}
+              >
+                <Layers size={13} /> Campaigns & Runs
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('approval')}
+                style={tabButtonStyle(activeTab === 'approval')}
+              >
+                <Shield size={13} /> Approval Queue
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('evidence')}
+                style={tabButtonStyle(activeTab === 'evidence')}
+              >
+                <FileText size={13} /> Evidence & Logs
+              </button>
+            </div>
 
-            <section style={panelStyle()}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <div style={{ fontSize: '13px', fontWeight: 850 }}>Đăng ký Targets dự án</div>
-                <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Tổng: {targets.length} targets</div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1.4fr) minmax(200px, 1fr)', gap: '14px', alignItems: 'start' }}>
-                <TargetRegistryList
-                  targets={targets}
-                  loading={loadingTargets}
-                  onToggleStatus={handleToggleTargetStatus}
-                  onBlockTarget={handleBlockTarget}
+            {/* Tab content panel */}
+            <div style={{ marginTop: '4px' }}>
+              {activeTab === 'overview' && (
+                <OverviewPolicyTab
+                  project={selectedProject}
+                  actionPending={actionPending}
+                  onToggleKillSwitch={handleToggleKillSwitch}
+                  onTogglePause={handleTogglePause}
+                  onArchive={handleArchive}
                 />
+              )}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '12px' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 850 }}><UserPlus size={12} style={{ display: 'inline', marginRight: '4px' }} /> Đăng ký Target mới</div>
-                  
-                  <input value={newTargetLabel} onChange={e => setNewTargetLabel(e.target.value)} placeholder="Nhãn Target (ví dụ: Fanpage Beauty A)" style={inputStyle()} />
-                  
-                  <select 
-                    aria-label="Kênh liên kết"
-                    value={newTargetChannelId} 
-                    onChange={e => setNewTargetChannelId(e.target.value)} 
-                    style={inputStyle()}
-                  >
-                    <option value="">-- Chọn kênh Facebook --</option>
-                    {channels.map(channel => (
-                      <option key={channel.id} value={channel.id}>
-                        {channel.display_name} ({channel.platform} / {channel.channel_type})
-                      </option>
-                    ))}
-                  </select>
+              {activeTab === 'targets' && (
+                <section style={panelStyle()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 850 }}>Đăng ký Targets dự án</div>
+                    <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Tổng: {targets.length} targets</div>
+                  </div>
 
-                  <button 
-                    type="button" 
-                    onClick={handleRegisterTarget} 
-                    disabled={actionPending}
-                    style={buttonStyle('#16a34a')}
-                  >
-                    + ĐĂNG KÝ TARGET
-                  </button>
-                </div>
-              </div>
-            </section>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1.4fr) minmax(200px, 1fr)', gap: '14px', alignItems: 'start' }}>
+                    <TargetRegistryList
+                      targets={targets}
+                      loading={loadingTargets}
+                      onToggleStatus={handleToggleTargetStatus}
+                      onBlockTarget={handleBlockTarget}
+                    />
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '12px' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 850 }}><UserPlus size={12} style={{ display: 'inline', marginRight: '4px' }} /> Đăng ký Target mới</div>
+                      
+                      <input value={newTargetLabel} onChange={e => setNewTargetLabel(e.target.value)} placeholder="Nhãn Target (ví dụ: Fanpage Beauty A)" style={inputStyle()} />
+                      
+                      <select 
+                        aria-label="Kênh liên kết"
+                        value={newTargetChannelId} 
+                        onChange={e => setNewTargetChannelId(e.target.value)} 
+                        style={inputStyle()}
+                      >
+                        <option value="">-- Chọn kênh Facebook --</option>
+                        {channels.map(channel => (
+                          <option key={channel.id} value={channel.id}>
+                            {channel.display_name} ({channel.platform} / {channel.channel_type})
+                          </option>
+                        ))}
+                      </select>
+
+                      <button 
+                        type="button" 
+                        onClick={handleRegisterTarget} 
+                        disabled={actionPending}
+                        style={buttonStyle('#16a34a')}
+                      >
+                        + ĐĂNG KÝ TARGET
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {activeTab === 'campaigns' && (
+                <CampaignsRunsTab
+                  project={selectedProject}
+                  actionPending={actionPending}
+                  onMessage={setMessage}
+                />
+              )}
+
+              {activeTab === 'approval' && (
+                <ApprovalQueueTab
+                  project={selectedProject}
+                  onMessage={setMessage}
+                />
+              )}
+
+              {activeTab === 'evidence' && (
+                <EvidenceLogsTab
+                  project={selectedProject}
+                  onMessage={setMessage}
+                />
+              )}
+            </div>
           </div>
         ) : (
           <div style={emptyPanelStyle()}>
@@ -422,5 +488,26 @@ function emptyPanelStyle(): React.CSSProperties {
     justifyContent: 'center',
     gap: '12px',
     minHeight: '280px',
+  }
+}
+
+function tabButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    background: active ? 'var(--card)' : 'transparent',
+    border: '1px solid ' + (active ? 'var(--border)' : 'transparent'),
+    borderBottomColor: active ? 'var(--card)' : 'transparent',
+    borderRadius: '10px 10px 0 0',
+    padding: '8px 14px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '12px',
+    fontWeight: active ? 850 : 500,
+    color: active ? 'var(--accent)' : 'var(--muted)',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+    outline: 'none',
+    position: 'relative',
+    top: '1px',
   }
 }
