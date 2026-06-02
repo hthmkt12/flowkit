@@ -75,6 +75,7 @@ APPROVAL_REQUIRED = _is_truthy(os.environ.get("APPROVAL_REQUIRED"), default=True
 ZOOPOST_CLOUD_API_URL = os.environ.get("ZOOPOST_CLOUD_API_URL", "").strip()
 ZOOPOST_AGENT_CREDENTIAL = os.environ.get("ZOOPOST_AGENT_CREDENTIAL", "").strip()
 ZOOPOST_AGENT_INSTALLATION_ID = os.environ.get("ZOOPOST_AGENT_INSTALLATION_ID", "").strip()
+ZOOPOST_CLOUD_DEV_BEARER_TOKEN = os.environ.get("ZOOPOST_CLOUD_DEV_BEARER_TOKEN", "").strip()
 ZOOPOST_GATEWAY_POLL_INTERVAL = _clamped_int(
     os.environ.get("ZOOPOST_GATEWAY_POLL_INTERVAL"),
     default=5,

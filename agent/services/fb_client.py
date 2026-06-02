@@ -458,6 +458,9 @@ class FBClient:
     async def get_page_state(self, fb_uid: str = None) -> dict:
         return await self._send("get_page_state", {}, fb_uid=fb_uid)
 
+    async def get_post_metrics(self, external_post_id: str, fb_uid: str = None) -> dict:
+        return await self._send("get_post_metrics", {"externalPostId": external_post_id}, fb_uid=fb_uid)
+
 
 # ─── Singleton ──────────────────────────────────────────────
 

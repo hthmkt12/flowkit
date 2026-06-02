@@ -215,6 +215,16 @@ export default function EvidenceLogsTab({
                               </span>
                             </div>
                           </div>
+                          
+                          {isSuccess && (target.reach !== undefined || target.likes !== undefined) && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '6px', fontSize: '11px', color: 'var(--muted)', background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 10px' }}>
+                              <span>Reach: <strong style={{ color: 'var(--text)' }}>{target.reach || 0}</strong></span>
+                              <span>Engagement: <strong style={{ color: 'var(--text)' }}>{target.engagement || 0}</strong></span>
+                              <span>Likes: <strong style={{ color: 'var(--text)' }}>{target.likes || 0}</strong></span>
+                              <span>Comments: <strong style={{ color: 'var(--text)' }}>{target.comments || 0}</strong></span>
+                              <span>Shares: <strong style={{ color: 'var(--text)' }}>{target.shares || 0}</strong></span>
+                            </div>
+                          )}
 
                           {target.error_message && (
                             <div style={errorBoxStyle()}>

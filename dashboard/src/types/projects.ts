@@ -114,6 +114,11 @@ export interface RunEvidence {
       attempts: number
       error_code: string | null
       error_message: string | null
+      reach?: number
+      engagement?: number
+      likes?: number
+      comments?: number
+      shares?: number
     }>
     decisions?: Record<string, 'allow_auto' | 'require_approval' | 'block'>
   }

@@ -35,6 +35,7 @@ from agent.services.spy_ads import get_spy_ads
 from agent.services.notifier import get_notifier
 from agent.services.auth import require_api_key
 from agent.services.zoopost_cloud_agent import run_gateway_loop
+from agent.services.metrics_sync import get_metrics_sync
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,6 +79,10 @@ async def lifespan(app: FastAPI):
 
     zoopost_gateway_task = asyncio.create_task(run_gateway_loop())
 
+    # Start metrics sync service
+    metrics_sync = get_metrics_sync()
+    metrics_sync_task = asyncio.create_task(metrics_sync.start())
+
     # Start WebSocket server for extension
     ws_server = await websockets.serve(
         _handle_extension_ws, WS_HOST, WS_PORT,
@@ -89,12 +94,14 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down...")
+    metrics_sync.request_shutdown()
     spy.request_shutdown()
     seeder.request_shutdown()
     scheduler.request_shutdown()
     worker.request_shutdown()
     zoopost_gateway_task.cancel()
-    await asyncio.gather(zoopost_gateway_task, return_exceptions=True)
+    metrics_sync_task.cancel()
+    await asyncio.gather(zoopost_gateway_task, metrics_sync_task, return_exceptions=True)
     await worker.drain()
     ws_server.close()
     await ws_server.wait_closed()
