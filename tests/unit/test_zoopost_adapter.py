@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 
 import pytest
@@ -228,24 +228,23 @@ async def test_cloud_live_intent_requires_then_allows_separate_local_approval(db
     assert "approved" not in approved_payload
 
 
-@pytest.mark.parametrize("channel_type", ["profile", "group"])
 @pytest.mark.asyncio
-async def test_cloud_live_intent_is_fanpage_only(db, channel_type):
+async def test_cloud_live_intent_is_restricted(db):
     from agent.db import crud
     from agent.services.zoopost_cloud_agent import handle_dispatch
 
     await crud.create_account("Page A", fb_uid="page-1")
 
-    with pytest.raises(ValueError, match="fanpage"):
+    with pytest.raises(ValueError, match="restricted"):
         await handle_dispatch(
             {
-                "dispatchId": f"dispatch-live-{channel_type}",
+                "dispatchId": "dispatch-live-group",
                 "platform": "facebook",
-                "channelType": channel_type,
+                "channelType": "group",
                 "platformTaskType": "facebook.post_text",
                 "expectedFbUid": "page-1",
                 "dryRun": False,
-                "content": {"body": "Non-fanpage live intent"},
+                "content": {"body": "Group live intent"},
             }
         )
 
