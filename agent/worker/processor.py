@@ -78,14 +78,17 @@ def _next_retry_delay_s(retry_count: int) -> int:
 
 
 def _strategy_url_from_payload(payload: dict) -> str:
-    for key in ("postUrl", "groupUrl", "pageUrl", "profileUrl", "sourceUrl"):
-        if payload.get(key):
-            return payload[key]
+    if payload.get("postUrl"):
+        return payload["postUrl"]
 
     target_type = payload.get("targetType")
     target_id = payload.get("targetId")
     if target_type and target_id:
         return f"{str(target_type).upper()}:{target_id}"
+
+    for key in ("groupUrl", "pageUrl", "profileUrl", "sourceUrl"):
+        if payload.get(key):
+            return payload[key]
 
     return "*"
 

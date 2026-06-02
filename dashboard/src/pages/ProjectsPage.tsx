@@ -32,6 +32,9 @@ export default function ProjectsPage() {
   // Form states for target registration
   const [newTargetLabel, setNewTargetLabel] = useState('')
   const [newTargetChannelId, setNewTargetChannelId] = useState('')
+  const [newTargetType, setNewTargetType] = useState<'fanpage' | 'group'>('fanpage')
+  const [cooldownMinutes, setCooldownMinutes] = useState<number>(30)
+  const [maxPostsPerDay, setMaxPostsPerDay] = useState<number>(5)
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true)
@@ -98,7 +101,7 @@ export default function ProjectsPage() {
         live_enabled: newProjectLive,
         dry_run_required: newProjectDryRun,
         default_autopilot_mode: newProjectAutopilot,
-        allowed_target_types: ['fanpage'],
+        allowed_target_types: ['fanpage', 'group'],
       })
       setProjects(prev => [created, ...prev])
       setSelectedProjectId(created.id)
@@ -174,13 +177,19 @@ export default function ProjectsPage() {
     setActionPending(true)
     try {
       const created = await postAPI<TargetRegistry>(`/api/projects/${selectedProjectId}/targets`, {
-        target_type: 'fanpage',
+        target_type: newTargetType,
         social_channel_id: newTargetChannelId,
         label,
+        rules: newTargetType === 'group' ? {
+          cooldown_minutes: Number(cooldownMinutes),
+          max_posts_per_day: Number(maxPostsPerDay)
+        } : {},
       })
       setTargets(prev => [created, ...prev])
       setNewTargetLabel('')
       setNewTargetChannelId('')
+      setCooldownMinutes(30)
+      setMaxPostsPerDay(5)
       setMessage(`Đã đăng ký target: ${created.label}`)
     } catch {
       setMessage('Không đăng ký được target.')
@@ -381,7 +390,20 @@ export default function ProjectsPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '12px' }}>
                       <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 850 }}><UserPlus size={12} style={{ display: 'inline', marginRight: '4px' }} /> Đăng ký Target mới</div>
                       
-                      <input value={newTargetLabel} onChange={e => setNewTargetLabel(e.target.value)} placeholder="Nhãn Target (ví dụ: Fanpage Beauty A)" style={inputStyle()} />
+                      <select 
+                        aria-label="Loại Target"
+                        value={newTargetType} 
+                        onChange={e => {
+                          setNewTargetType(e.target.value as 'fanpage' | 'group')
+                          setNewTargetChannelId('')
+                        }} 
+                        style={inputStyle()}
+                      >
+                        <option value="fanpage">Fanpage Target</option>
+                        <option value="group">Group Target</option>
+                      </select>
+
+                      <input value={newTargetLabel} onChange={e => setNewTargetLabel(e.target.value)} placeholder={newTargetType === 'group' ? "Tên nhóm Target (ví dụ: Nhóm Review Cổ Đồ)" : "Nhãn Target (ví dụ: Fanpage Beauty A)"} style={inputStyle()} />
                       
                       <select 
                         aria-label="Kênh liên kết"
@@ -390,12 +412,48 @@ export default function ProjectsPage() {
                         style={inputStyle()}
                       >
                         <option value="">-- Chọn kênh Facebook --</option>
-                        {channels.map(channel => (
-                          <option key={channel.id} value={channel.id}>
-                            {channel.display_name} ({channel.platform} / {channel.channel_type})
-                          </option>
-                        ))}
+                        {channels
+                          .filter(channel => {
+                            if (newTargetType === 'fanpage') {
+                              return channel.channel_type === 'fanpage'
+                            }
+                            if (newTargetType === 'group') {
+                              return channel.channel_type === 'profile' || channel.channel_type === 'fanpage'
+                            }
+                            return false
+                          })
+                          .map(channel => (
+                            <option key={channel.id} value={channel.id}>
+                              {channel.display_name} ({channel.platform} / {channel.channel_type})
+                            </option>
+                          ))}
                       </select>
+
+                      {newTargetType === 'group' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', border: '1px dashed var(--border)', borderRadius: '10px', padding: '10px', background: 'rgba(0,0,0,0.05)' }}>
+                          <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)' }}>Cấu hình giới hạn Group</div>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <label style={{ fontSize: '11px', flex: 1 }}>
+                              Cooldown (phút):
+                              <input 
+                                type="number" 
+                                value={cooldownMinutes} 
+                                onChange={e => setCooldownMinutes(parseInt(e.target.value) || 0)} 
+                                style={{ ...inputStyle(), marginTop: '4px' }} 
+                              />
+                            </label>
+                            <label style={{ fontSize: '11px', flex: 1 }}>
+                              Giới hạn bài/ngày:
+                              <input 
+                                type="number" 
+                                value={maxPostsPerDay} 
+                                onChange={e => setMaxPostsPerDay(parseInt(e.target.value) || 0)} 
+                                style={{ ...inputStyle(), marginTop: '4px' }} 
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
 
                       <button 
                         type="button" 

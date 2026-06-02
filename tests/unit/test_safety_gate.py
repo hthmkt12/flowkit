@@ -1076,3 +1076,18 @@ def test_fb_client_does_not_fallback_when_specific_uid_is_missing():
     client.update_session(ws, "connected-fb-uid", logged_in=True)
 
     assert client.get_session_for("missing-fb-uid") is None
+
+
+def test_group_target_type_requires_group_url():
+    from agent.services.safety_gate import enforce_payload
+    # Lacking groupUrl should raise ValueError
+    with pytest.raises(ValueError, match="group targetType requires a non-empty groupUrl"):
+        enforce_payload("POST_TEXT", {"targetType": "GROUP"})
+
+    with pytest.raises(ValueError, match="group targetType requires a non-empty groupUrl"):
+        enforce_payload("POST_TEXT", {"targetType": "GROUP", "groupUrl": ""})
+
+    # Valid groupUrl should succeed without error
+    payload = enforce_payload("POST_TEXT", {"targetType": "GROUP", "groupUrl": "https://facebook.com/groups/test"})
+    assert payload["targetType"] == "GROUP"
+    assert payload["groupUrl"] == "https://facebook.com/groups/test"

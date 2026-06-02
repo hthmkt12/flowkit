@@ -55,8 +55,14 @@ export default function TargetRegistryList({
                     {target.target_type.toUpperCase()}
                   </span>
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px', display: 'flex', gap: '8px' }}>
+                <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '2px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <span>Platform: {target.platform}</span>
+                  {target.rules && target.rules.cooldown_minutes !== undefined && (
+                    <span>Cooldown: {String(target.rules.cooldown_minutes)}m</span>
+                  )}
+                  {target.rules && target.rules.max_posts_per_day !== undefined && (
+                    <span>Daily Max: {String(target.rules.max_posts_per_day)}</span>
+                  )}
                   {target.last_seen_at && <span>Seen: {new Date(target.last_seen_at).toLocaleTimeString('vi-VN')}</span>}
                 </div>
               </div>

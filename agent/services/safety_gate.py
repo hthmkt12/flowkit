@@ -78,6 +78,15 @@ def enforce_payload(task_type: str, payload: dict | None) -> dict:
     if not is_mutating_task(task_type):
         return safe_payload
 
+    if safe_payload.get("targetType") == "GROUP":
+        group_url = safe_payload.get("groupUrl")
+        if not group_url or not isinstance(group_url, str) or not group_url.strip():
+            target_id = safe_payload.get("targetId")
+            if target_id:
+                safe_payload["groupUrl"] = f"https://facebook.com/groups/{target_id}"
+            else:
+                raise ValueError("group targetType requires a non-empty groupUrl or targetId")
+
     if not config.LIVE_ACTIONS_ENABLED:
         safe_payload["dryRun"] = True
         safe_payload.setdefault("safetyReason", "live_actions_disabled")
