@@ -402,7 +402,11 @@ def _build_task_payload(dispatch: dict[str, Any], expected_fb_uid: str) -> dict[
     )
     if _has_live_intent(dispatch):
         payload["zoopostLiveIntent"] = True
-        payload["localApprovalRequired"] = True
+        approval_status = dispatch.get("approvalStatus")
+        if approval_status in ("not_required", "approved"):
+            payload["localApprovalRequired"] = False
+        else:
+            payload["localApprovalRequired"] = True
     if media:
         payload["zoopostMediaRefs"] = media
     if dispatch.get("target"):

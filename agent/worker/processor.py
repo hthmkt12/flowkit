@@ -214,10 +214,14 @@ class WorkerController:
                 if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
                     self.last_rate_limit_error = "Live dispatch requires API_AUTH_ENABLED and WS_AUTH_ENABLED"
                     return False
-            arm = await crud.get_active_live_arm(payload.get("_liveArmId"), task.get("account_id"), task_type)
-            if not arm:
-                self.last_rate_limit_error = "Live mutating task requires an active matching live arm"
-                return False
+            
+            from agent.services.safety_gate import truthy
+            local_approval = truthy(payload.get("localApprovalRequired", True))
+            if local_approval:
+                arm = await crud.get_active_live_arm(payload.get("_liveArmId"), task.get("account_id"), task_type)
+                if not arm:
+                    self.last_rate_limit_error = "Live mutating task requires an active matching live arm"
+                    return False
             fb_uid = None
             if task.get("account_id"):
                 account = await crud.get_account(task["account_id"])
@@ -419,6 +423,10 @@ class WorkerController:
                 completed_at=utc_now_iso(),
                 result=json.dumps(result),
             )
+            
+            from agent.services.health_monitor import get_health_monitor
+            if task.get("account_id"):
+                get_health_monitor().record_success(task["account_id"])
 
             # Record structured trace (AutoBrowse pattern)
             await crud.create_trace(
@@ -521,6 +529,14 @@ class WorkerController:
                         "error_class": error_class,
                     },
                 )
+                
+                from agent.services.health_monitor import get_health_monitor
+                if task.get("account_id"):
+                    monitor = get_health_monitor()
+                    if "checkpoint" in error_message.lower() or "security check" in error_message.lower():
+                        await monitor.record_checkpoint(task["account_id"])
+                    else:
+                        await monitor.record_failure(task["account_id"], error_message)
 
                 # Telegram alert for permanent failures
                 notifier = get_notifier()
