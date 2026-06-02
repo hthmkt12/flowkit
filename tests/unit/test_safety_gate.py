@@ -1091,3 +1091,30 @@ def test_group_target_type_requires_group_url():
     payload = enforce_payload("POST_TEXT", {"targetType": "GROUP", "groupUrl": "https://facebook.com/groups/test"})
     assert payload["targetType"] == "GROUP"
     assert payload["groupUrl"] == "https://facebook.com/groups/test"
+
+
+def test_post_target_type_requires_post_url():
+    from agent.services.safety_gate import enforce_payload
+    with pytest.raises(ValueError, match="post targetType requires a non-empty postUrl"):
+        enforce_payload("COMMENT_POST", {"targetType": "POST"})
+
+    with pytest.raises(ValueError, match="post targetType requires a non-empty postUrl"):
+        enforce_payload("COMMENT_POST", {"targetType": "POST", "postUrl": ""})
+
+    payload = enforce_payload("COMMENT_POST", {"targetType": "POST", "postUrl": "https://facebook.com/post/123"})
+    assert payload["targetType"] == "POST"
+    assert payload["postUrl"] == "https://facebook.com/post/123"
+
+
+def test_lead_target_type_requires_profile_url():
+    from agent.services.safety_gate import enforce_payload
+    with pytest.raises(ValueError, match="lead targetType requires a non-empty profileUrl"):
+        enforce_payload("ADD_FRIEND", {"targetType": "LEAD"})
+
+    with pytest.raises(ValueError, match="lead targetType requires a non-empty profileUrl"):
+        enforce_payload("ADD_FRIEND", {"targetType": "LEAD", "profileUrl": ""})
+
+    payload = enforce_payload("ADD_FRIEND", {"targetType": "LEAD", "profileUrl": "https://facebook.com/profile.php?id=123"})
+    assert payload["targetType"] == "LEAD"
+    assert payload["profileUrl"] == "https://facebook.com/profile.php?id=123"
+

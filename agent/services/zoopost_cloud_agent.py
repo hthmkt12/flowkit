@@ -28,6 +28,9 @@ TASK_TYPE_MAP = {
     "facebook.post_video": "POST_VIDEO",
     "facebook.post_link": "POST_LINK",
     "facebook.reup_video": "REUP_VIDEO",
+    "facebook.comment_post": "COMMENT_POST",
+    "facebook.add_friend": "ADD_FRIEND",
+    "facebook.accept_friend": "ACCEPT_FRIEND",
 }
 CHANNEL_TYPES = {"fanpage", "profile", "group"}
 DEFAULT_CAPABILITIES = [{"name": "publish-dry-run"}]
@@ -342,8 +345,8 @@ async def handle_dispatch(dispatch: dict[str, Any]) -> dict[str, Any]:
     channel_type = dispatch.get("channelType")
     if channel_type not in CHANNEL_TYPES:
         raise ValueError("unsupported facebook channel type")
-    if _has_live_intent(dispatch) and channel_type != "fanpage":
-        raise ValueError("cloud live intent is fanpage-only")
+    if _has_live_intent(dispatch) and channel_type not in {"fanpage", "profile"}:
+        raise ValueError("cloud live intent is restricted to fanpage and profile channels")
 
     task_type = TASK_TYPE_MAP.get(_required_text(dispatch, "platformTaskType"))
     if not task_type:
@@ -397,6 +400,7 @@ def _build_task_payload(dispatch: dict[str, Any], expected_fb_uid: str) -> dict[
         {
             "dryRun": True,
             "content": body,
+            "comment": body,
             "expectedFbUid": expected_fb_uid,
         }
     )

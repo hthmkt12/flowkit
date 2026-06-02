@@ -86,6 +86,14 @@ def enforce_payload(task_type: str, payload: dict | None) -> dict:
                 safe_payload["groupUrl"] = f"https://facebook.com/groups/{target_id}"
             else:
                 raise ValueError("group targetType requires a non-empty groupUrl or targetId")
+    elif safe_payload.get("targetType") == "POST":
+        post_url = safe_payload.get("postUrl")
+        if not post_url or not isinstance(post_url, str) or not post_url.strip():
+            raise ValueError("post targetType requires a non-empty postUrl")
+    elif safe_payload.get("targetType") == "LEAD":
+        profile_url = safe_payload.get("profileUrl")
+        if not profile_url or not isinstance(profile_url, str) or not profile_url.strip():
+            raise ValueError("lead targetType requires a non-empty profileUrl")
 
     if not config.LIVE_ACTIONS_ENABLED:
         safe_payload["dryRun"] = True

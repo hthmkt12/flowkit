@@ -63,6 +63,12 @@ export default function TargetRegistryList({
                   {target.rules && target.rules.max_posts_per_day !== undefined && (
                     <span>Daily Max: {String(target.rules.max_posts_per_day)}</span>
                   )}
+                  {target.rules && target.rules.post_url && (
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '250px' }} title={target.rules.post_url}>Post URL: {target.rules.post_url}</span>
+                  )}
+                  {target.rules && target.rules.profile_url && (
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '250px' }} title={target.rules.profile_url}>Profile URL: {target.rules.profile_url}</span>
+                  )}
                   {target.last_seen_at && <span>Seen: {new Date(target.last_seen_at).toLocaleTimeString('vi-VN')}</span>}
                 </div>
               </div>

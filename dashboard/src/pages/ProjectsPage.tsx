@@ -32,9 +32,11 @@ export default function ProjectsPage() {
   // Form states for target registration
   const [newTargetLabel, setNewTargetLabel] = useState('')
   const [newTargetChannelId, setNewTargetChannelId] = useState('')
-  const [newTargetType, setNewTargetType] = useState<'fanpage' | 'group'>('fanpage')
+  const [newTargetType, setNewTargetType] = useState<'fanpage' | 'group' | 'post' | 'lead'>('fanpage')
   const [cooldownMinutes, setCooldownMinutes] = useState<number>(30)
   const [maxPostsPerDay, setMaxPostsPerDay] = useState<number>(5)
+  const [postUrl, setPostUrl] = useState('')
+  const [profileUrl, setProfileUrl] = useState('')
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true)
@@ -101,7 +103,7 @@ export default function ProjectsPage() {
         live_enabled: newProjectLive,
         dry_run_required: newProjectDryRun,
         default_autopilot_mode: newProjectAutopilot,
-        allowed_target_types: ['fanpage', 'group'],
+        allowed_target_types: ['fanpage', 'group', 'post', 'lead'],
       })
       setProjects(prev => [created, ...prev])
       setSelectedProjectId(created.id)
@@ -174,22 +176,45 @@ export default function ProjectsPage() {
       setMessage('Vui lòng điền nhãn target và chọn kênh liên kết.')
       return
     }
+    if (newTargetType === 'post' && !postUrl.trim()) {
+      setMessage('Vui lòng nhập Post URL cho target post.')
+      return
+    }
+    if (newTargetType === 'lead' && !profileUrl.trim()) {
+      setMessage('Vui lòng nhập Profile URL cho target lead.')
+      return
+    }
     setActionPending(true)
     try {
+      let rules = {}
+      if (newTargetType === 'group') {
+        rules = {
+          cooldown_minutes: Number(cooldownMinutes),
+          max_posts_per_day: Number(maxPostsPerDay)
+        }
+      } else if (newTargetType === 'post') {
+        rules = {
+          post_url: postUrl.trim()
+        }
+      } else if (newTargetType === 'lead') {
+        rules = {
+          profile_url: profileUrl.trim()
+        }
+      }
+
       const created = await postAPI<TargetRegistry>(`/api/projects/${selectedProjectId}/targets`, {
         target_type: newTargetType,
         social_channel_id: newTargetChannelId,
         label,
-        rules: newTargetType === 'group' ? {
-          cooldown_minutes: Number(cooldownMinutes),
-          max_posts_per_day: Number(maxPostsPerDay)
-        } : {},
+        rules,
       })
       setTargets(prev => [created, ...prev])
       setNewTargetLabel('')
       setNewTargetChannelId('')
       setCooldownMinutes(30)
       setMaxPostsPerDay(5)
+      setPostUrl('')
+      setProfileUrl('')
       setMessage(`Đã đăng ký target: ${created.label}`)
     } catch {
       setMessage('Không đăng ký được target.')
@@ -394,17 +419,37 @@ export default function ProjectsPage() {
                         aria-label="Loại Target"
                         value={newTargetType} 
                         onChange={e => {
-                          setNewTargetType(e.target.value as 'fanpage' | 'group')
+                          setNewTargetType(e.target.value as 'fanpage' | 'group' | 'post' | 'lead')
                           setNewTargetChannelId('')
                         }} 
                         style={inputStyle()}
                       >
                         <option value="fanpage">Fanpage Target</option>
                         <option value="group">Group Target</option>
+                        <option value="post">Post Target (Comment)</option>
+                        <option value="lead">Lead Target (Friend Request)</option>
                       </select>
 
-                      <input value={newTargetLabel} onChange={e => setNewTargetLabel(e.target.value)} placeholder={newTargetType === 'group' ? "Tên nhóm Target (ví dụ: Nhóm Review Cổ Đồ)" : "Nhãn Target (ví dụ: Fanpage Beauty A)"} style={inputStyle()} />
+                      <input value={newTargetLabel} onChange={e => setNewTargetLabel(e.target.value)} placeholder={newTargetType === 'group' ? "Tên nhóm Target (ví dụ: Nhóm Review Cổ Đồ)" : newTargetType === 'post' ? "Nhãn Post Target (ví dụ: Post Review 01)" : newTargetType === 'lead' ? "Nhãn Lead Target (ví dụ: Lead A)" : "Nhãn Target (ví dụ: Fanpage Beauty A)"} style={inputStyle()} />
                       
+                      {newTargetType === 'post' && (
+                        <input 
+                          value={postUrl} 
+                          onChange={e => setPostUrl(e.target.value)} 
+                          placeholder="Post URL (ví dụ: https://facebook.com/...)" 
+                          style={inputStyle()} 
+                        />
+                      )}
+
+                      {newTargetType === 'lead' && (
+                        <input 
+                          value={profileUrl} 
+                          onChange={e => setProfileUrl(e.target.value)} 
+                          placeholder="Profile URL (ví dụ: https://facebook.com/...)" 
+                          style={inputStyle()} 
+                        />
+                      )}
+
                       <select 
                         aria-label="Kênh liên kết"
                         value={newTargetChannelId} 
@@ -419,6 +464,12 @@ export default function ProjectsPage() {
                             }
                             if (newTargetType === 'group') {
                               return channel.channel_type === 'profile' || channel.channel_type === 'fanpage'
+                            }
+                            if (newTargetType === 'post') {
+                              return channel.channel_type === 'profile' || channel.channel_type === 'fanpage'
+                            }
+                            if (newTargetType === 'lead') {
+                              return channel.channel_type === 'profile'
                             }
                             return false
                           })
