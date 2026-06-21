@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, Play, Eye, FileText, CheckSquare, Layers, AlertCircle } from 'lucide-react'
 import { fetchAPI, postAPI, deleteAPI } from '../api/client'

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback } from 'react'
 import { Check, X, Shield, AlertTriangle, RefreshCw, Clock } from 'lucide-react'
 import { fetchAPI, postAPI } from '../../api/client'

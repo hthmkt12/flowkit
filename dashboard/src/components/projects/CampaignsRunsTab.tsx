@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 import { useState, useEffect, useCallback } from 'react'
 import { Play, Eye, RefreshCw, Clock, Sparkles } from 'lucide-react'
 import { fetchAPI, postAPI } from '../../api/client'

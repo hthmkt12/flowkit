@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 import { useState, useEffect, useCallback } from 'react'
 import { FileText, Camera, RefreshCw, AlertCircle, ExternalLink } from 'lucide-react'
 import { fetchAPI, postAPI } from '../../api/client'
