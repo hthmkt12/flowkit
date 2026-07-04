@@ -39,6 +39,8 @@ interface PublishRun {
   targets: RunTarget[]
 }
 
+const LIVE_RUNS_DISABLED_REASON = 'Live run disabled: current phase is dry-run-only until guarded live readiness exists.'
+
 export default function CampaignsRunsTab({
   project,
   actionPending: parentActionPending,
@@ -105,6 +107,10 @@ export default function CampaignsRunsTab({
 
   const handleLaunchRun = async (dryRun: boolean) => {
     if (!selectedCampaignId) return
+    if (!dryRun) {
+      onMessage(LIVE_RUNS_DISABLED_REASON)
+      return
+    }
     setActionPending(true)
     setPreviewResult(null)
     const runType = dryRun ? 'dry-run' : 'live'
@@ -227,18 +233,24 @@ export default function CampaignsRunsTab({
                   <Play size={14} /> Dry-run
                 </button>
 
-                {project.live_enabled && (
-                  <button
-                    type="button"
-                    disabled={previewLoading || actionPending || parentActionPending}
-                    onClick={() => handleLaunchRun(false)}
-                    style={buttonStyle('var(--green)')}
-                  >
-                    <Sparkles size={14} /> Live Run
-                  </button>
-                )}
+                <button
+                  type="button"
+                  disabled
+                  onClick={() => handleLaunchRun(false)}
+                  style={buttonDisabledStyle()}
+                  title={LIVE_RUNS_DISABLED_REASON}
+                >
+                  <Sparkles size={14} /> Live Run Locked
+                </button>
               </div>
             </div>
+
+            {project.live_enabled && (
+              <div style={liveDisabledNoticeStyle()}>
+                Project live flag is ON, but campaign live dispatch is still locked in this product phase.
+                Run dry-runs only until guarded live readiness passes.
+              </div>
+            )}
 
             {/* Render preview inline if loaded */}
             <PolicyPreviewPanel preview={previewResult} loading={previewLoading} />
@@ -440,6 +452,27 @@ function buttonSecondaryStyle(): React.CSSProperties {
     cursor: 'pointer',
     flex: 1,
     height: '35px',
+  }
+}
+
+function buttonDisabledStyle(): React.CSSProperties {
+  return {
+    ...buttonStyle('rgba(100, 116, 139, 0.45)'),
+    cursor: 'not-allowed',
+    opacity: 0.72,
+  }
+}
+
+function liveDisabledNoticeStyle(): React.CSSProperties {
+  return {
+    border: '1px solid rgba(217, 119, 6, 0.24)',
+    background: 'rgba(217, 119, 6, 0.08)',
+    color: 'var(--muted)',
+    borderRadius: '10px',
+    padding: '8px 10px',
+    fontSize: '11px',
+    fontWeight: 700,
+    lineHeight: 1.45,
   }
 }
 
