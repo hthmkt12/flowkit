@@ -26,9 +26,9 @@ export default function OverviewPolicyTab({
         <div style={panelStyle()}>
           <div style={panelTitleStyle()}>Chính Sách Autopilot</div>
           <div style={policyRowStyle()}>
-            <span style={policyLabelStyle()}>Live Posting:</span>
-            <span style={project.live_enabled ? activeStatusStyle() : inactiveStatusStyle()}>
-              {project.live_enabled ? 'CHO PHÉP' : 'TẮT (CHỈ DRY-RUN)'}
+            <span style={policyLabelStyle()}>Live Flag:</span>
+            <span style={project.live_enabled ? pendingStatusStyle() : inactiveStatusStyle()}>
+              {project.live_enabled ? 'ON - LOCKED' : 'OFF (DRY-RUN ONLY)'}
             </span>
           </div>
           <div style={policyRowStyle()}>
@@ -41,6 +41,11 @@ export default function OverviewPolicyTab({
             <span style={policyLabelStyle()}>Autopilot Mode:</span>
             <span style={highlightTextStyle()}>{project.default_autopilot_mode.toUpperCase()}</span>
           </div>
+          {project.live_enabled && (
+            <div style={noticeStyle()}>
+              Live project flag is enabled, but live execution remains locked in this product phase. Use campaign dry-runs until guarded live readiness passes.
+            </div>
+          )}
         </div>
 
         {/* Niche & Meta Info Panel */}
@@ -173,10 +178,29 @@ function activeStatusStyle(): CSSProperties {
   }
 }
 
+function pendingStatusStyle(): CSSProperties {
+  return {
+    color: 'var(--yellow)',
+    fontWeight: 800,
+  }
+}
+
 function inactiveStatusStyle(): CSSProperties {
   return {
     color: 'var(--red)',
     fontWeight: 800,
+  }
+}
+
+function noticeStyle(): CSSProperties {
+  return {
+    border: '1px solid rgba(217, 119, 6, 0.22)',
+    background: 'rgba(217, 119, 6, 0.08)',
+    borderRadius: '8px',
+    padding: '8px',
+    color: 'var(--muted)',
+    fontSize: '11px',
+    lineHeight: 1.45,
   }
 }
 

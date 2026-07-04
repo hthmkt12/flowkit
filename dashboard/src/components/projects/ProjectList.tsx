@@ -69,7 +69,7 @@ export default function ProjectList({
 
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', fontSize: '11px', color: 'var(--muted)', borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '4px' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <span>Live: {project.live_enabled ? 'ON' : 'OFF'}</span>
+                <span>Live flag: {project.live_enabled ? 'ON - LOCKED' : 'OFF'}</span>
                 <span>Dry-run: {project.dry_run_required ? 'REQ' : 'OPT'}</span>
               </div>
               

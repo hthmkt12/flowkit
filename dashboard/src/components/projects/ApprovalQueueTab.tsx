@@ -22,6 +22,8 @@ interface AgentTask {
   updated_at: string
 }
 
+const LIVE_APPROVALS_DISABLED_REASON = 'Live approvals are disabled in the current dry-run-only product phase.'
+
 export default function ApprovalQueueTab({
   project,
   onMessage,
@@ -70,18 +72,8 @@ export default function ApprovalQueueTab({
     return () => clearInterval(timer)
   }, [loadPendingTasks])
 
-  const handleApprove = async (taskId: string) => {
-    setActionPendingId(taskId)
-    try {
-      await postAPI(`/api/tasks/${taskId}/approve`)
-      onMessage('Đã PHÊ DUYỆT tác vụ live thành công.')
-      setTasks(prev => prev.filter(t => t.id !== taskId))
-    } catch (err: any) {
-      const errorMsg = err?.response?.data?.detail || err?.message || 'Lỗi phê duyệt tác vụ.'
-      onMessage(`Phê duyệt thất bại: ${errorMsg}`)
-    } finally {
-      setActionPendingId(null)
-    }
+  const handleApprove = async () => {
+    onMessage(LIVE_APPROVALS_DISABLED_REASON)
   }
 
   const handleCancel = async (taskId: string) => {
@@ -123,7 +115,7 @@ export default function ApprovalQueueTab({
           <div>
             <div style={panelTitleStyle()}>Hàng chờ phê duyệt (Approval Queue)</div>
             <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
-              Các tác vụ Live R1-R4 cần sự phê duyệt thủ công của Operator để tiến hành dispatch.
+              Live approvals are visible for audit only. Current product phase is dry-run-only, so approval cannot arm live dispatch.
             </div>
           </div>
           <button 
@@ -194,11 +186,12 @@ export default function ApprovalQueueTab({
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button
                         type="button"
-                        disabled={actionPendingId !== null}
-                        onClick={() => handleApprove(task.id)}
-                        style={approveBtnStyle()}
+                        disabled
+                        onClick={() => handleApprove()}
+                        style={approveDisabledBtnStyle()}
+                        title={LIVE_APPROVALS_DISABLED_REASON}
                       >
-                        <Check size={14} /> DUYỆT LIVE
+                        <Check size={14} /> LIVE LOCKED
                       </button>
 
                       <button
@@ -318,11 +311,11 @@ function jsonDetailsStyle(): React.CSSProperties {
   }
 }
 
-function approveBtnStyle(): React.CSSProperties {
+function approveDisabledBtnStyle(): React.CSSProperties {
   return {
     border: 0,
     borderRadius: '8px',
-    background: 'var(--green)',
+    background: 'rgba(100, 116, 139, 0.45)',
     color: '#fff',
     padding: '6px 12px',
     display: 'inline-flex',
@@ -330,7 +323,8 @@ function approveBtnStyle(): React.CSSProperties {
     gap: '4px',
     fontSize: '11px',
     fontWeight: 850,
-    cursor: 'pointer',
+    cursor: 'not-allowed',
+    opacity: 0.72,
     height: '30px',
   }
 }
