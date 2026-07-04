@@ -43,7 +43,7 @@ jobs:
         run: pytest -q
 
   dashboard:
-    name: Dashboard build
+    name: Dashboard lint, tests, and build
     runs-on: windows-latest
     timeout-minutes: 10
 
@@ -63,6 +63,14 @@ jobs:
       - name: Install dependencies
         working-directory: dashboard
         run: npm ci
+
+      - name: Lint
+        working-directory: dashboard
+        run: npm run lint
+
+      - name: Run tests
+        working-directory: dashboard
+        run: npm run test
 
       - name: Build
         working-directory: dashboard
