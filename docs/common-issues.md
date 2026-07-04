@@ -113,6 +113,34 @@ If dashboard requests fail from a non-default dev host, add that origin to `CORS
 - `GET /api/status` returns `extension.connected=true`.
 - At least one session reports `logged_in=true` and non-empty `fb_uid`.
 
+## Issue: Extension connects but task dispatch has no receiver
+
+### Symptoms
+
+- `/api/status` reports a fresh connected extension session.
+- A dry-run task fails with `Could not establish connection. Receiving end does not exist.`
+- The extension background heartbeat works, but no Facebook DOM handler responds.
+
+### Root Cause
+
+- Reloading or newly loading the unpacked extension does not inject its content script into Facebook documents that were already open.
+- The background service worker can reconnect independently, which makes the extension appear healthy until the first tab dispatch.
+
+### Common Triggers
+
+- Reloading FBKit from `chrome://extensions` while a Facebook tab remains open.
+- Loading the unpacked extension after the Facebook page has already finished loading.
+
+### Solutions
+
+- Refresh the signed-in Facebook tab after loading or reloading the extension.
+- Wait for the page to finish loading before retrying the dry-run smoke.
+
+### Verification
+
+- `/api/status` shows a fresh, logged-in extension session.
+- `python scripts/fbkit-dry-run-smoke.py` completes with `{"ok": true}` and does not perform a live DOM action.
+
 ## Issue: Dry-run smoke sees only stale logged-in sessions
 
 ### Symptoms
