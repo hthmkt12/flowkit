@@ -429,6 +429,30 @@ async def list_terminal_zoopost_tasks(limit: int = 100) -> list[dict]:
     return _rows_to_list(await cur.fetchall())
 
 
+async def list_due_metrics_tasks(limit: int, refresh_seconds: int, max_age_days: int) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT t.id, t.ref_id, t.result, a.fb_uid "
+        "FROM task t LEFT JOIN account a ON t.account_id = a.id "
+        "WHERE t.ref_id LIKE 'zoopost:%' AND t.status = 'COMPLETED' "
+        "AND COALESCE(t.completed_at, t.updated_at) >= datetime('now', ?) "
+        "AND (t.metrics_synced_at IS NULL OR t.metrics_synced_at <= datetime('now', ?)) "
+        "ORDER BY COALESCE(t.metrics_synced_at, '') ASC, COALESCE(t.completed_at, t.updated_at) DESC "
+        "LIMIT ?",
+        (f"-{max_age_days} days", f"-{refresh_seconds} seconds", limit),
+    )
+    return _rows_to_list(await cur.fetchall())
+
+
+async def mark_task_metrics_synced(task_id: str):
+    db = await get_db()
+    await db.execute(
+        "UPDATE task SET metrics_synced_at = ? WHERE id = ?",
+        (utc_now_iso(), task_id),
+    )
+    await db.commit()
+
+
 async def rollback():
     db = await get_db()
     await db.rollback()

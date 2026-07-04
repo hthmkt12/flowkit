@@ -94,6 +94,24 @@ ZOOPOST_GATEWAY_ACK_TIMEOUT = _clamped_int(
     minimum=1,
     maximum=300,
 )
+ZOOPOST_METRICS_BATCH_LIMIT = _clamped_int(
+    os.environ.get("ZOOPOST_METRICS_BATCH_LIMIT"),
+    default=20,
+    minimum=1,
+    maximum=100,
+)
+ZOOPOST_METRICS_REFRESH_SECONDS = _clamped_int(
+    os.environ.get("ZOOPOST_METRICS_REFRESH_SECONDS"),
+    default=3600,
+    minimum=60,
+    maximum=86400,
+)
+ZOOPOST_METRICS_MAX_AGE_DAYS = _clamped_int(
+    os.environ.get("ZOOPOST_METRICS_MAX_AGE_DAYS"),
+    default=30,
+    minimum=1,
+    maximum=365,
+)
 
 # ─── Scheduler ───────────────────────────────────────────────
 SCHEDULER_CHECK_INTERVAL = int(os.environ.get("SCHEDULER_CHECK_INTERVAL", "30"))  # seconds

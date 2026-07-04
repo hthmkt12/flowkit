@@ -249,3 +249,33 @@ If dashboard requests fail from a non-default dev host, add that origin to `CORS
 - `GET /api/status` shows a session with the expected `fb_uid`.
 - Dry-run task can route safely.
 - Live mutating task does not dispatch unless exact routing is available.
+
+## Issue: ZooPost target metrics never update
+
+### Symptoms
+
+- Completed ZooPost posts keep showing zero reach and engagement.
+- FBKit logs `Unknown method: get_post_metrics` or a 401 metrics response.
+
+### Root Cause
+
+- The extension router did not implement the read-only `get_post_metrics` command.
+- Metrics uploads used an optional development user bearer token instead of the paired agent credential.
+
+### Common Triggers
+
+- Running the normal pairing helper, which configures `ZOOPOST_AGENT_CREDENTIAL` but no development bearer token.
+- Starting metrics collection while the target post is not visible in the connected Facebook tab.
+
+### Solutions
+
+- Keep the extension metrics handler and agent-gateway metrics endpoint aligned.
+- Authenticate metrics uploads with `X-Agent-Credential`.
+- Treat a post that is not visible in the current tab as unavailable rather than uploading fabricated metrics.
+- Process only a bounded batch of recent posts and record `metrics_synced_at` after a successful upload.
+- Use `ZOOPOST_METRICS_BATCH_LIMIT`, `ZOOPOST_METRICS_REFRESH_SECONDS`, and `ZOOPOST_METRICS_MAX_AGE_DAYS` to tune refresh load.
+
+### Verification
+
+- `python -m pytest tests\unit\test_extension_dry_run.py tests\unit\test_zoopost_adapter.py tests\unit\test_crud.py -q` passes from `flowkit`.
+- `python -m pytest tests\contract\test_target_metrics.py -q` passes from `zoopost-cloud`.

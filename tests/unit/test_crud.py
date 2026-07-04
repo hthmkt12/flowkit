@@ -58,6 +58,7 @@ class TestAccountCrud:
         assert await crud.delete_account(acc["id"]) is True
         assert await crud.get_account(acc["id"]) is None
 
+
     @pytest.mark.asyncio
     async def test_encrypted_cookies(self, db):
         from agent.db import crud
@@ -88,6 +89,51 @@ class TestAccountCrud:
             acc["id"], cookies_data="new-cookie"
         )
         assert updated["cookies_data"] == "new-cookie"
+
+
+class TestMetricsSyncCrud:
+    @pytest.mark.asyncio
+    async def test_lists_only_bounded_due_completed_zoopost_tasks(self, db):
+        from agent.db import crud
+
+        account = await crud.create_account("Metrics Account", fb_uid="123")
+        for index in range(3):
+            await crud.create_task(
+                account["id"],
+                "POST_TEXT",
+                ref_id=f"zoopost:dispatch-{index}",
+                status="COMPLETED",
+                result=json.dumps({"externalPostId": f"post-{index}"}),
+            )
+        await crud.create_task(
+            account["id"],
+            "POST_TEXT",
+            ref_id="local-task",
+            status="COMPLETED",
+            result=json.dumps({"externalPostId": "local-post"}),
+        )
+
+        candidates = await crud.list_due_metrics_tasks(limit=2, refresh_seconds=3600, max_age_days=30)
+
+        assert len(candidates) == 2
+        assert all(task["ref_id"].startswith("zoopost:") for task in candidates)
+
+    @pytest.mark.asyncio
+    async def test_marked_metrics_task_is_not_immediately_due_again(self, db):
+        from agent.db import crud
+
+        account = await crud.create_account("Metrics Account", fb_uid="123")
+        task = await crud.create_task(
+            account["id"],
+            "POST_TEXT",
+            ref_id="zoopost:dispatch-synced",
+            status="COMPLETED",
+            result=json.dumps({"externalPostId": "post-synced"}),
+        )
+
+        await crud.mark_task_metrics_synced(task["id"])
+
+        assert await crud.list_due_metrics_tasks(limit=10, refresh_seconds=3600, max_age_days=30) == []
 
 
 class TestTaskCrud:

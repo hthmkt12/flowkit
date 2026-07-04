@@ -9,7 +9,7 @@ import logging
 import httpx
 
 from agent import config
-from agent.db.schema import get_db
+from agent.db import crud
 from agent.services.fb_client import get_fb_client
 
 logger = logging.getLogger(__name__)
@@ -56,15 +56,11 @@ class MetricsSync:
         if not config.ZOOPOST_CLOUD_API_URL:
             return
 
-        db = await get_db()
-        # Query completed tasks with a zoopost reference
-        # Note: We want to get the latest fb_uid from the account if possible
-        cur = await db.execute(
-            "SELECT t.id, t.ref_id, t.result, a.fb_uid FROM task t "
-            "LEFT JOIN account a ON t.account_id = a.id "
-            "WHERE t.ref_id LIKE 'zoopost:%' AND t.status = 'COMPLETED'"
+        tasks = await crud.list_due_metrics_tasks(
+            limit=config.ZOOPOST_METRICS_BATCH_LIMIT,
+            refresh_seconds=config.ZOOPOST_METRICS_REFRESH_SECONDS,
+            max_age_days=config.ZOOPOST_METRICS_MAX_AGE_DAYS,
         )
-        tasks = await cur.fetchall()
 
         fb_client = get_fb_client()
         async with httpx.AsyncClient() as http_client:
@@ -72,7 +68,10 @@ class MetricsSync:
                 if self._shutdown:
                     break
                 
-                task_id, ref_id, result_str, fb_uid = row
+                task_id = row["id"]
+                ref_id = row["ref_id"]
+                result_str = row["result"]
+                fb_uid = row["fb_uid"]
                 dispatch_id = ref_id.split(":", 1)[1] if ":" in ref_id else None
                 if not dispatch_id:
                     continue
@@ -113,10 +112,8 @@ class MetricsSync:
                         continue
 
                     # Post metrics back to ZooPost Cloud
-                    url = f"{config.ZOOPOST_CLOUD_API_URL.rstrip('/')}/api/publish-jobs/targets/{dispatch_id}/metrics"
-                    headers = {}
-                    if config.ZOOPOST_CLOUD_DEV_BEARER_TOKEN:
-                        headers["Authorization"] = f"Bearer {config.ZOOPOST_CLOUD_DEV_BEARER_TOKEN}"
+                    url = f"{config.ZOOPOST_CLOUD_API_URL.rstrip('/')}/agent-gateway/targets/{dispatch_id}/metrics"
+                    headers = {"X-Agent-Credential": config.ZOOPOST_AGENT_CREDENTIAL}
 
                     body = {
                         "reach": metrics.get("reach", 0),
@@ -128,6 +125,7 @@ class MetricsSync:
                     
                     cloud_res = await http_client.post(url, json=body, headers=headers, timeout=10)
                     if cloud_res.status_code == 200:
+                        await crud.mark_task_metrics_synced(task_id)
                         logger.info("Successfully synced metrics for dispatch %s to cloud", dispatch_id)
                         self._sync_count += 1
                     else:

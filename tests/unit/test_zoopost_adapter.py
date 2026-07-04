@@ -4,6 +4,118 @@ import json
 import pytest
 
 
+@pytest.mark.asyncio
+async def test_metrics_sync_uploads_with_agent_credential_and_marks_success(monkeypatch):
+    from agent import config
+    from agent.services import metrics_sync
+
+    candidate = {
+        "id": "task-1",
+        "ref_id": "zoopost:dispatch-1",
+        "result": json.dumps({"externalPostId": "post-1"}),
+        "fb_uid": "123",
+    }
+    marked = []
+    posts = []
+
+    async def list_due_metrics_tasks(**kwargs):
+        assert kwargs == {"limit": 20, "refresh_seconds": 3600, "max_age_days": 30}
+        return [candidate]
+
+    async def mark_task_metrics_synced(task_id):
+        marked.append(task_id)
+
+    class FakeFbClient:
+        async def get_post_metrics(self, external_post_id, fb_uid=None):
+            assert (external_post_id, fb_uid) == ("post-1", "123")
+            return {"metrics": {"reach": 9, "engagement": 4, "likes": 2, "comments": 1, "shares": 1}}
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+    class FakeHttpClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **kwargs):
+            posts.append((url, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr(config, "ZOOPOST_CLOUD_API_URL", "https://cloud.example")
+    monkeypatch.setattr(config, "ZOOPOST_AGENT_CREDENTIAL", "agent-secret")
+    monkeypatch.setattr(config, "ZOOPOST_METRICS_BATCH_LIMIT", 20)
+    monkeypatch.setattr(config, "ZOOPOST_METRICS_REFRESH_SECONDS", 3600)
+    monkeypatch.setattr(config, "ZOOPOST_METRICS_MAX_AGE_DAYS", 30)
+    monkeypatch.setattr(metrics_sync.crud, "list_due_metrics_tasks", list_due_metrics_tasks)
+    monkeypatch.setattr(metrics_sync.crud, "mark_task_metrics_synced", mark_task_metrics_synced)
+    monkeypatch.setattr(metrics_sync, "get_fb_client", lambda: FakeFbClient())
+    monkeypatch.setattr(metrics_sync.httpx, "AsyncClient", FakeHttpClient)
+
+    await metrics_sync.MetricsSync().sync_metrics()
+
+    assert marked == ["task-1"]
+    assert posts == [
+        (
+            "https://cloud.example/agent-gateway/targets/dispatch-1/metrics",
+            {
+                "json": {"reach": 9, "engagement": 4, "likes": 2, "comments": 1, "shares": 1},
+                "headers": {"X-Agent-Credential": "agent-secret"},
+                "timeout": 10,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_metrics_sync_does_not_mark_failed_cloud_upload(monkeypatch):
+    from agent import config
+    from agent.services import metrics_sync
+
+    candidate = {
+        "id": "task-1",
+        "ref_id": "zoopost:dispatch-1",
+        "result": json.dumps({"externalPostId": "post-1"}),
+        "fb_uid": "123",
+    }
+    marked = []
+
+    async def list_due_metrics_tasks(**_kwargs):
+        return [candidate]
+
+    class FakeFbClient:
+        async def get_post_metrics(self, *_args, **_kwargs):
+            return {"metrics": {"reach": 1}}
+
+    class FakeResponse:
+        status_code = 503
+        text = "unavailable"
+
+    class FakeHttpClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(config, "ZOOPOST_CLOUD_API_URL", "https://cloud.example")
+    monkeypatch.setattr(config, "ZOOPOST_AGENT_CREDENTIAL", "agent-secret")
+    monkeypatch.setattr(metrics_sync.crud, "list_due_metrics_tasks", list_due_metrics_tasks)
+    monkeypatch.setattr(metrics_sync.crud, "mark_task_metrics_synced", lambda task_id: marked.append(task_id))
+    monkeypatch.setattr(metrics_sync, "get_fb_client", lambda: FakeFbClient())
+    monkeypatch.setattr(metrics_sync.httpx, "AsyncClient", FakeHttpClient)
+
+    await metrics_sync.MetricsSync().sync_metrics()
+
+    assert marked == []
+
+
 class FakeCloudSocket:
     def __init__(self, incoming):
         self.incoming = list(incoming)

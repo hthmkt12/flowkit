@@ -663,6 +663,44 @@ function handleGetPageState() {
   };
 }
 
+function parseMetricCount(value) {
+  const text = String(value || "").trim().toLowerCase().replace(/,/g, "");
+  const match = text.match(/(\d+(?:\.\d+)?)\s*([km])?/);
+  if (!match) return 0;
+  const multiplier = match[2] === "m" ? 1000000 : match[2] === "k" ? 1000 : 1;
+  return Math.round(Number(match[1]) * multiplier);
+}
+
+async function handleGetPostMetrics(params) {
+  const externalPostId = String(params?.externalPostId || "").trim();
+  if (!externalPostId) return { error: "externalPostId is required" };
+
+  const matchingLink = [...document.querySelectorAll("a[href]")]
+    .find(link => link.href.includes(externalPostId));
+  const post = matchingLink?.closest('[role="article"]');
+  if (!post) return { error: "Post is not visible in the current Facebook tab" };
+
+  const labelled = [...post.querySelectorAll("[aria-label]")];
+  const countFor = (patterns) => {
+    const element = labelled.find(node => patterns.some(pattern => pattern.test(node.getAttribute("aria-label") || "")));
+    return parseMetricCount(element?.getAttribute("aria-label"));
+  };
+  const likes = countFor([/reaction/i, /\blike/i, /\blượt thích/i, /\bcảm xúc/i]);
+  const comments = countFor([/comment/i, /bình luận/i]);
+  const shares = countFor([/share/i, /lượt chia sẻ/i]);
+
+  return {
+    success: true,
+    metrics: {
+      reach: 0,
+      engagement: likes + comments + shares,
+      likes,
+      comments,
+      shares,
+    },
+  };
+}
+
 /**
  * Post with Media (Images/Videos/Reels).
  * Supports TIMELINE, GROUP, PAGE, and REEL targets.
@@ -1528,6 +1566,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       case "get_page_state":
         result = handleGetPageState();
+        break;
+      case "get_post_metrics":
+        result = await handleGetPostMetrics(params);
         break;
       default:
         result = { error: `Unknown method: ${method}` };

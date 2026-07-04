@@ -224,6 +224,9 @@ Verified in `agent/config.py`:
 | `APPROVAL_REQUIRED` | `true` | Requires payload approval before live mutation |
 | `ZOOPOST_CLOUD_API_URL` | empty | Enables the ZooPost Cloud gateway loop only when paired with `ZOOPOST_AGENT_CREDENTIAL`; remote URLs must be `https`/`wss`, while loopback `http`/`ws` is allowed for local dev |
 | `ZOOPOST_AGENT_CREDENTIAL` | empty | Env-only ZooPost agent credential sent in `agent_hello`; do not persist in docs, git, browser storage, or cloud logs |
+| `ZOOPOST_METRICS_BATCH_LIMIT` | `20` | Maximum recent completed ZooPost posts refreshed per metrics cycle; clamped to 1-100 |
+| `ZOOPOST_METRICS_REFRESH_SECONDS` | `3600` | Minimum delay before refreshing the same post metrics again; clamped to 60-86400 seconds |
+| `ZOOPOST_METRICS_MAX_AGE_DAYS` | `30` | Oldest completed post eligible for metrics refresh; clamped to 1-365 days |
 | `ZOOPOST_AGENT_INSTALLATION_ID` | empty | Optional installation-scoped gateway `connectionId`; otherwise falls back to `FBKIT_NODE_ID` |
 | `ZOOPOST_GATEWAY_POLL_INTERVAL` | `5` | Gateway heartbeat/poll loop delay in seconds; clamped to `1`-`60` seconds |
 | `ZOOPOST_GATEWAY_DISPATCH_LIMIT` | `10` | Max dry-run dispatches polled per gateway cycle; clamped to `1`-`100` |

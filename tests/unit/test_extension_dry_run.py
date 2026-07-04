@@ -44,6 +44,7 @@ READ_ONLY_METHODS = [
     "scrape_group",
     "scrape_live_comments",
     "get_page_state",
+    "get_post_metrics",
 ]
 
 
@@ -155,6 +156,15 @@ def test_router_forces_extension_dry_run_before_dispatching_mutating_methods():
         dispatch_index = body.find(f'case "{method}":')
         assert dispatch_index != -1, f"router does not dispatch {method}"
         assert router_guard_index < dispatch_index, f"router guard appears after {method} dispatch"
+
+
+def test_router_dispatches_read_only_post_metrics_handler():
+    source = _source()
+    body = _router_body(source)
+
+    assert "async function handleGetPostMetrics(params)" in source
+    assert 'case "get_post_metrics":' in body
+    assert "result = await handleGetPostMetrics(params);" in body
 
 
 def test_mutating_handlers_check_dry_run_before_dangerous_dom_actions():

@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS task (
     started_at      DATETIME,
     completed_at    DATETIME,
     result          TEXT,          -- JSON result
+    metrics_synced_at DATETIME,
     error_message   TEXT,
     created_at      DATETIME DEFAULT (datetime('now')),
     updated_at      DATETIME DEFAULT (datetime('now'))
@@ -284,6 +285,8 @@ _MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS live_account_lease (account_id TEXT PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE, task_id TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE, node_id TEXT NOT NULL, acquired_at DATETIME NOT NULL, heartbeat_at DATETIME NOT NULL, expires_at DATETIME NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_live_account_lease_expires ON live_account_lease(expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_live_account_lease_node ON live_account_lease(node_id)",
+    "ALTER TABLE task ADD COLUMN metrics_synced_at DATETIME",
+    "CREATE INDEX IF NOT EXISTS idx_task_metrics_due ON task(status, metrics_synced_at, completed_at)",
 ]
 
 
