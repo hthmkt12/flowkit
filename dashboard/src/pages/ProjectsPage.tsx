@@ -25,8 +25,6 @@ export default function ProjectsPage() {
   // Form states for project creation
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectNiche, setNewProjectNiche] = useState('')
-  const [newProjectLive, setNewProjectLive] = useState(false)
-  const [newProjectDryRun, setNewProjectDryRun] = useState(true)
   const [newProjectAutopilot, setNewProjectAutopilot] = useState<Project['default_autopilot_mode']>('guarded_autopilot')
 
   // Form states for target registration
@@ -100,8 +98,8 @@ export default function ProjectsPage() {
       const created = await postAPI<Project>('/api/projects', {
         name,
         niche: newProjectNiche.trim() || null,
-        live_enabled: newProjectLive,
-        dry_run_required: newProjectDryRun,
+        live_enabled: false,
+        dry_run_required: true,
         default_autopilot_mode: newProjectAutopilot,
         allowed_target_types: ['fanpage', 'group', 'post', 'lead'],
       })
@@ -288,18 +286,21 @@ export default function ProjectsPage() {
           <section style={panelStyle()}>
             <div style={{ fontSize: '13px', fontWeight: 850, marginBottom: '10px' }}>+ Tạo dự án mới</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <input value={newProjectName} onChange={e => setNewProjectName(e.target.value)} placeholder="Tên dự án (Ví dụ: Affiliate Gadgets)" style={inputStyle()} />
-              <input value={newProjectNiche} onChange={e => setNewProjectNiche(e.target.value)} placeholder="Niche (Ví dụ: beauty, tech)" style={inputStyle()} />
+              <input aria-label="Project name" value={newProjectName} onChange={e => setNewProjectName(e.target.value)} placeholder="Tên dự án (Ví dụ: Affiliate Gadgets)" style={inputStyle()} />
+              <input aria-label="Project niche" value={newProjectNiche} onChange={e => setNewProjectNiche(e.target.value)} placeholder="Niche (Ví dụ: beauty, tech)" style={inputStyle()} />
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11px', color: 'var(--muted)', margin: '4px 0' }}>
                 <label style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <input type="checkbox" checked={newProjectLive} onChange={e => setNewProjectLive(e.target.checked)} />
-                  Kích hoạt Live Mutation (Live run)
+                  <input type="checkbox" checked={false} disabled readOnly />
+                  Live Mutation locked in current phase
                 </label>
                 <label style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <input type="checkbox" checked={newProjectDryRun} onChange={e => setNewProjectDryRun(e.target.checked)} />
-                  Bắt buộc Dry-run trước khi Live
+                  <input type="checkbox" checked disabled readOnly />
+                  Dry-run required before any future live readiness
                 </label>
+                <div style={phaseLockNoticeStyle()}>
+                  New projects are created dry-run-only: live_enabled=false and dry_run_required=true.
+                </div>
               </div>
 
               <select 
@@ -316,6 +317,7 @@ export default function ProjectsPage() {
 
               <button 
                 type="button" 
+                aria-label="Create dry-run-only project"
                 onClick={handleCreateProject} 
                 disabled={actionPending}
                 style={buttonStyle('#2563eb')}
@@ -564,6 +566,10 @@ function inputStyle(): React.CSSProperties {
 
 function buttonStyle(background: string): React.CSSProperties {
   return { border: 0, borderRadius: '10px', background, color: '#fff', padding: '8px 14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px', fontWeight: 850, cursor: 'pointer' }
+}
+
+function phaseLockNoticeStyle(): React.CSSProperties {
+  return { border: '1px solid rgba(217,119,6,0.22)', background: 'rgba(217,119,6,0.08)', borderRadius: '8px', padding: '8px', lineHeight: 1.45 }
 }
 
 function messageStyle(): React.CSSProperties {
