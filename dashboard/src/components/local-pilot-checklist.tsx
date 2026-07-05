@@ -3,7 +3,11 @@ import type { CSSProperties } from 'react'
 
 const pilotCommands = [
   {
-    label: 'Full readiness gate',
+    label: 'Gate A+B verification',
+    command: '$python=(Resolve-Path \'.\\flowkit\\.venv\\Scripts\\python.exe\').Path; .\\scripts\\zoopost-verify-all.ps1 -Python $python -IncludeSafetyGate',
+  },
+  {
+    label: 'Fresh paired stack setup',
     command: '.\\scripts\\demo-sales-local-pilot-ready.ps1 -StartPairedFbkit -StopExistingFbkit',
   },
   {
@@ -18,7 +22,7 @@ const pilotCommands = [
 
 const pilotSteps = [
   'Load Chrome extension and sign in with the Facebook test profile.',
-  'Run the full readiness gate from the repository root.',
+  'Run Gate A+B verification from the repository root with live actions disabled.',
   'Open Fanpage Dry Run and create one dry-run publish job.',
   'Return here to show readiness, job completion, audit evidence, and safety boundary.',
 ]
@@ -33,6 +37,9 @@ export function LocalPilotChecklist() {
       <div style={titleStyle()}>
         <CheckCircle2 size={16} />
         Local Pilot Checklist
+      </div>
+      <div style={safetyNoteStyle}>
+        Dry-run pilot only. Gate A+B must pass with live actions disabled before using this screen as handoff evidence.
       </div>
       <div style={layoutStyle}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -121,4 +128,11 @@ const codeStyle: CSSProperties = {
   color: 'var(--muted)',
   fontSize: '11px',
   overflowWrap: 'anywhere',
+}
+
+const safetyNoteStyle: CSSProperties = {
+  marginBottom: '12px',
+  color: '#d97706',
+  fontSize: '12px',
+  lineHeight: 1.45,
 }
