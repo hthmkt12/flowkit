@@ -90,23 +90,57 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Extension WebSocket server on ws://%s:%d", WS_HOST, WS_PORT)
 
-    yield
+    # All owned background tasks
+    owned_tasks = [
+        worker_task, scheduler_task, seeder_task, spy_task,
+        notifier_task, zoopost_gateway_task, metrics_sync_task,
+    ]
 
-    # Shutdown
-    logger.info("Shutting down...")
-    metrics_sync.request_shutdown()
-    spy.request_shutdown()
-    seeder.request_shutdown()
-    scheduler.request_shutdown()
-    worker.request_shutdown()
-    zoopost_gateway_task.cancel()
-    metrics_sync_task.cancel()
-    await asyncio.gather(zoopost_gateway_task, metrics_sync_task, return_exceptions=True)
-    await worker.drain()
-    ws_server.close()
-    await ws_server.wait_closed()
-    await close_db()
-    logger.info("FBKit Agent stopped")
+    try:
+        yield
+    finally:
+        # Shutdown: close ingress first, then signal cooperative services,
+        # cancel all remaining tasks, drain worker, close WS/DB.
+        logger.info("Shutting down...")
+
+        # Close ingress (stop accepting new extension connections)
+        ws_server.close()
+        await ws_server.wait_closed()
+
+        # Signal cooperative shutdown
+        metrics_sync.request_shutdown()
+        spy.request_shutdown()
+        seeder.request_shutdown()
+        scheduler.request_shutdown()
+        worker.request_shutdown()
+
+        # Cancel all owned tasks (notifier and gateway have no stop API)
+        for task in owned_tasks:
+            if not task.done():
+                task.cancel()
+
+        # Await all owned tasks with a bounded timeout
+        SHUTDOWN_TIMEOUT = 10.0
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*owned_tasks, return_exceptions=True),
+                timeout=SHUTDOWN_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            pending_names = [t.get_name() for t in owned_tasks if not t.done()]
+            logger.warning("Shutdown timeout — still pending: %s", pending_names)
+            # Force-cancel and await again
+            for task in owned_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*owned_tasks, return_exceptions=True)
+
+        # Drain worker (wait for in-flight tasks)
+        await worker.drain()
+
+        # Close DB last
+        await close_db()
+        logger.info("FBKit Agent stopped")
 
 
 # ─── Extension WebSocket Handler ─────────────────────────────
