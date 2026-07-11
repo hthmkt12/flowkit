@@ -94,11 +94,9 @@ async def approve_task(task_id: str):
             409,
             "Live actions are disabled (LIVE_ACTIONS_ENABLED=false); approval cannot enable live dispatch",
         )
-    # Bypass auth check for local pilot testing
-    import sys
-    if "pytest" in sys.modules:
-        if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
-            raise HTTPException(409, "API_AUTH_ENABLED and WS_AUTH_ENABLED must be true before live approval")
+    # Always enforce explicit auth flags. No framework-presence bypass.
+    if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
+        raise HTTPException(409, "API_AUTH_ENABLED and WS_AUTH_ENABLED must be true before live approval")
 
     try:
         payload = json.loads(task.get("payload") or "{}") if task.get("payload") else {}

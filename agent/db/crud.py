@@ -657,20 +657,26 @@ async def list_activities(account_id: str = None, limit: int = 50) -> list[dict]
 
 # ─── Live Arm ────────────────────────────────────────────────
 
-def _require_live_arm_auth_enabled():
-    import sys
-    if "pytest" in sys.modules:
-        if not config.API_AUTH_ENABLED:
-            raise ValueError("API_AUTH_ENABLED must be true before arming live actions")
-        if not config.WS_AUTH_ENABLED:
-            raise ValueError("WS_AUTH_ENABLED must be true before arming live actions")
-
-
 def live_auth_ready() -> bool:
-    import sys
-    if "pytest" in sys.modules:
-        return bool(config.API_AUTH_ENABLED and config.WS_AUTH_ENABLED)
-    return True
+    """Return True only when both API and WebSocket auth are enabled.
+
+    Pure runtime predicate. Never branch on framework presence: tests
+    configure the flags explicitly and production reads the same flags.
+    Live authorization fails closed whenever either flag is false.
+    """
+    return bool(config.API_AUTH_ENABLED and config.WS_AUTH_ENABLED)
+
+
+def _require_live_arm_auth_enabled():
+    """Fail closed unless both API and WebSocket auth are enabled.
+
+    Pure runtime predicate identical in tests and production. Gating this
+    on framework presence would create a production bypass.
+    """
+    if not config.API_AUTH_ENABLED:
+        raise ValueError("API_AUTH_ENABLED must be true before arming live actions")
+    if not config.WS_AUTH_ENABLED:
+        raise ValueError("WS_AUTH_ENABLED must be true before arming live actions")
 
 
 def _lease_expires_at(ttl_seconds: int | None) -> str:

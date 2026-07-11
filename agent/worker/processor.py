@@ -211,12 +211,10 @@ class WorkerController:
             return True
 
         if is_mutating_task(task_type):
-            # Bypass auth checks for local pilot testing
-            import sys
-            if "pytest" in sys.modules:
-                if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
-                    self.last_rate_limit_error = "Live dispatch requires API_AUTH_ENABLED and WS_AUTH_ENABLED"
-                    return False
+            # Always enforce explicit auth flags. No framework-presence bypass.
+            if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
+                self.last_rate_limit_error = "Live dispatch requires API_AUTH_ENABLED and WS_AUTH_ENABLED"
+                return False
             
             from agent.services.safety_gate import truthy
             local_approval = truthy(payload.get("localApprovalRequired", True))
@@ -589,11 +587,9 @@ class WorkerController:
         dry_run = dry_run_from_payload(payload)
 
         if is_mutating_task(task_type) and not dry_run:
-            # Bypass auth checks for local pilot testing
-            import sys
-            if "pytest" in sys.modules:
-                if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
-                    return {"error": "Live dispatch requires API_AUTH_ENABLED and WS_AUTH_ENABLED"}
+            # Always enforce explicit auth flags. No framework-presence bypass.
+            if not config.API_AUTH_ENABLED or not config.WS_AUTH_ENABLED:
+                return {"error": "Live dispatch requires API_AUTH_ENABLED and WS_AUTH_ENABLED"}
             arm = await crud.get_active_live_arm(payload.get("_liveArmId"), task.get("account_id"), task_type)
             if not arm:
                 return {"error": "Live mutating task requires an active matching live arm"}
