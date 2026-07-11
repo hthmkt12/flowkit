@@ -1,18 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { WSEvent } from '../types'
-import { getZooPostBearerToken } from './client'
 
-function base64UrlEncode(value: string): string {
-  const bytes = new TextEncoder().encode(value)
-  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('')
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/u, '')
-}
-
-export function dashboardWebSocketProtocols(): string[] | undefined {
-  const token = getZooPostBearerToken()
-  return token ? [`bearer.b64.${base64UrlEncode(token)}`] : undefined
-}
-
+/**
+ * Dashboard WebSocket hook.
+ *
+ * No browser bearer subprotocol. The dashboard connects anonymously to
+ * the local-dev /ws/dashboard upstream. Any future authenticated
+ * dashboard must use short-lived HttpOnly/Secure/SameSite server
+ * sessions designed in a separate plan.
+ */
 export function useWebSocket() {
   const [isConnected, setIsConnected] = useState(false)
   const [lastEvent, setLastEvent] = useState<WSEvent | null>(null)
@@ -24,10 +20,7 @@ export function useWebSocket() {
 
   const connect = useCallback(() => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const protocols = dashboardWebSocketProtocols()
-    const ws = protocols
-      ? new WebSocket(`${proto}//${window.location.host}/ws/dashboard`, protocols)
-      : new WebSocket(`${proto}//${window.location.host}/ws/dashboard`)
+    const ws = new WebSocket(`${proto}//${window.location.host}/ws/dashboard`)
     wsRef.current = ws
 
     ws.onopen = () => {

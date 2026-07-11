@@ -1,7 +1,7 @@
 import { act, cleanup, render, renderHook, screen } from '@testing-library/react'
 import { createElement, Fragment } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { dashboardWebSocketProtocols, useWebSocket } from './useWebSocket'
+import { useWebSocket } from './useWebSocket'
 
 type ActEnvironmentGlobal = typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 
@@ -120,20 +120,14 @@ describe('useWebSocket', () => {
     expect(MockWebSocket.instances).toHaveLength(3)
   })
 
-  it('uses bearer subprotocol when a browser demo token is configured', () => {
-    window.localStorage.setItem('zoopostBearerToken', 'demo-token')
+  it('never opens a WebSocket with a bearer subprotocol', () => {
+    window.localStorage.setItem('zoopostBearerToken', 'must-not-be-used')
+    window.sessionStorage.setItem('zoopostBearerToken', 'must-not-be-used')
 
-    expect(dashboardWebSocketProtocols()).toEqual(['bearer.b64.ZGVtby10b2tlbg'])
-    vi.clearAllTimers()
-  })
+    renderHook(() => useWebSocket())
 
-  it('encodes local API keys into browser-safe WebSocket subprotocols', () => {
-    window.localStorage.setItem('zoopostBearerToken', 'abc+123/==')
-
-    const protocols = dashboardWebSocketProtocols()
-
-    expect(protocols).toEqual(['bearer.b64.YWJjKzEyMy89PQ'])
-    expect(protocols?.[0]).toMatch(/^[A-Za-z0-9._-]+$/u)
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(MockWebSocket.instances[0].protocols).toBeUndefined()
     vi.clearAllTimers()
   })
 

@@ -36,7 +36,6 @@ describe('AccountsPage', () => {
 
   beforeEach(() => {
     calls.length = 0
-    window.localStorage.setItem('zoopostBearerToken', 'browser-token')
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
       calls.push({ url, init })
       if (url === '/api/accounts') return jsonResponse([account()])
@@ -49,10 +48,11 @@ describe('AccountsPage', () => {
   afterEach(() => {
     cleanup()
     window.localStorage.clear()
+    window.sessionStorage.clear()
     vi.unstubAllGlobals()
   })
 
-  it('uses the authenticated API client when patching account status', async () => {
+  it('patches account status without attaching a browser bearer token', async () => {
     render(<AccountsPage />)
 
     expect(await screen.findByText('Pilot Account')).toBeTruthy()
@@ -60,7 +60,8 @@ describe('AccountsPage', () => {
 
     await waitFor(() => {
       const patch = calls.find(call => call.url === '/api/accounts/account-1' && call.init?.method === 'PATCH')
-      expect(patch?.init?.headers).toMatchObject({ Authorization: 'Bearer browser-token' })
+      const headers = (patch?.init?.headers ?? {}) as Record<string, string>
+      expect(headers.Authorization).toBeUndefined()
       expect(patch?.init?.body).toBe(JSON.stringify({ status: 'PAUSED' }))
     })
   })

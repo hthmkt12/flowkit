@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchAPI, getZooPostBearerToken } from './client'
+import { fetchAPI } from './client'
 
 describe('fetchAPI', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
+    window.localStorage.clear()
+    window.sessionStorage.clear()
   })
 
   it('returns undefined for HTTP 204 responses without parsing JSON', async () => {
@@ -27,15 +29,22 @@ describe('fetchAPI', () => {
     await expect(fetchAPI<{ ok: boolean }>('/api/data')).resolves.toEqual({ ok: true })
   })
 
-  it('does not read browser bearer tokens from Vite client env', () => {
-    window.localStorage.clear()
-    vi.stubEnv('VITE_ZOOPOST_CLOUD_BROWSER_TOKEN', 'bundled-secret')
+  it('never attaches an Authorization header or reads a bearer token', async () => {
+    window.localStorage.setItem('zoopostBearerToken', 'should-not-be-used')
+    window.sessionStorage.setItem('zoopostBearerToken', 'should-not-be-used')
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{"ok":true}') } as Response))
+    vi.stubGlobal('fetch', fetchMock)
 
-    expect(getZooPostBearerToken()).toBe('')
+    await fetchAPI<{ ok: boolean }>('/api/data')
+
+    const firstCall = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0]
+    const callInit = firstCall[1]
+    const headers = callInit.headers as Record<string, string>
+    expect(headers.Authorization).toBeUndefined()
+    expect(headers.authorization).toBeUndefined()
   })
 
-  it('preserves bearer auth when callers pass custom headers', async () => {
-    window.localStorage.setItem('zoopostBearerToken', 'browser-token')
+  it('preserves caller-supplied non-credential headers', async () => {
     const fetchMock = vi.fn(() => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{"ok":true}') } as Response))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -49,7 +58,6 @@ describe('fetchAPI', () => {
       method: 'PATCH',
       body: JSON.stringify({ status: 'ready' }),
       headers: expect.objectContaining({
-        Authorization: 'Bearer browser-token',
         'Content-Type': 'application/json',
         'X-Trace-ID': 'trace-1',
       }),

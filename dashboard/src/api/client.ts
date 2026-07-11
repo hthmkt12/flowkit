@@ -1,18 +1,21 @@
 const BASE = ''  // same origin, proxied by Vite in dev
-const TOKEN_STORAGE_KEY = 'zoopostBearerToken'
 
-export function getZooPostBearerToken(): string {
-  if (typeof window === 'undefined') return ''
-  return window.localStorage.getItem(TOKEN_STORAGE_KEY)?.trim() ?? ''
-}
-
+/**
+ * Public-static / local-dev API client.
+ *
+ * The dashboard no longer stores or attaches a Cloud bearer token. The
+ * browser must never hold long-lived bearer credentials (XSS-readable
+ * client storage / JS globals). The public-static UI is anonymous and
+ * reads no protected Cloud data. Local-dev relies on loopback-only
+ * proxying configured in vite.config.ts. Any future authenticated
+ * dashboard must use short-lived HttpOnly/Secure/SameSite server
+ * sessions designed in a separate plan — not a browser bearer contract.
+ */
 export async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = getZooPostBearerToken()
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
   })
