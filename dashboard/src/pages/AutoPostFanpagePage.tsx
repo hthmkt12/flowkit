@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle, Clock, Image, Link, Play, RefreshCw, Search, Video, Wand2 } from 'lucide-react'
 import { fetchAPI, postAPI } from '../api/client'
+import { safeExternalUrl } from '../utils/safe-external-url'
 import type { ChannelSelectorItem, ChannelSelectorResponse, ContentItem, ContentPreviewResult, MediaAsset, PublishJob, PublishJobProgress, SocialChannel } from '../types'
 
 const PLATFORM_COLOR: Record<string, string> = {
@@ -632,13 +633,7 @@ function ProgressPreview({
 }
 
 function safeExternalPostUrl(url: string | null) {
-  if (!url) return null
-  try {
-    const parsed = new URL(url)
-    return ['http:', 'https:'].includes(parsed.protocol) ? url : null
-  } catch {
-    return null
-  }
+  return safeExternalUrl(url)
 }
 
 function safeProgressMessage(message: string | null) {

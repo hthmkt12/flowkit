@@ -686,11 +686,24 @@ class WorkerController:
                 if r.get("error"):
                     logger.warning("Bulk msg to %s failed: %s",
                                    recipient.get("name"), r["error"])
-                await long_delay()
+                # Human delay only matters for real live mutations. Skip
+                # long_delay in dry-run so dry-run bulk never incurs the
+                # 5-15 second human delay.
+                if not dry_run:
+                    await long_delay()
             sent = sum(1 for r in results if r.get("success"))
+            failed = len(recipients) - sent
+            # Truthful aggregate result: all-failed is a failure, not success.
+            all_failed = failed == len(recipients) and len(recipients) > 0
             return {
-                "success": True,
-                "message": f"Bulk message: {sent}/{len(recipients)} sent",
+                "success": not all_failed,
+                "message": (
+                    f"Bulk message: {sent}/{len(recipients)} sent"
+                    if not all_failed
+                    else f"Bulk message failed: 0/{len(recipients)} sent"
+                ),
+                "sent": sent,
+                "failed": failed,
                 "details": results,
             }
 
