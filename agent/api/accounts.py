@@ -9,6 +9,62 @@ from agent.services.fb_client import get_fb_client
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
+# ─── Public response models (allowlisted; no secret material) ───────
+# These typed DTOs are the only shape the HTTP boundary may return.
+# Decrypted cookies/session live only in the internal CRUD repository.
+
+class AccountPublic(BaseModel):
+    """Allowlisted account fields. No cookies_data/session_data."""
+    id: str
+    name: str
+    fb_uid: Optional[str] = None
+    email: Optional[str] = None
+    status: Optional[str] = None
+    profile_url: Optional[str] = None
+    avatar_url: Optional[str] = None
+    notes: Optional[str] = None
+    cookies_valid: Optional[int] = None
+    last_active: Optional[str] = None
+    daily_posts: Optional[int] = None
+    daily_messages: Optional[int] = None
+    daily_likes: Optional[int] = None
+    daily_comments: Optional[int] = None
+    daily_friends: Optional[int] = None
+    daily_reset_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class ExtensionSessionPublic(BaseModel):
+    """Allowlisted extension telemetry. No cookies/session blobs."""
+    fb_uid: Optional[str] = None
+    logged_in: bool = False
+    extension_live_actions_enabled: Optional[bool] = None
+    profile_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    uptime_s: Optional[int] = None
+    last_seen_age_s: Optional[int] = None
+    stale: Optional[bool] = None
+    health: Optional[str] = None
+
+
+class ExtensionStatusAccountPublic(BaseModel):
+    id: str
+    fb_uid: Optional[str] = None
+    extension_online: bool = False
+    extension_health: Optional[str] = None
+    last_seen_age_s: Optional[int] = None
+    profile_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    extension_live_actions_enabled: Optional[bool] = None
+
+
+class ExtensionStatusPublic(BaseModel):
+    sessions: list[ExtensionSessionPublic] = []
+    accounts: list[ExtensionStatusAccountPublic] = []
+    total_sessions: int = 0
+
+
 def _select_best_session_by_uid(sessions: list[dict], include_stale: bool) -> dict:
     candidates = [
         session
@@ -40,7 +96,7 @@ class AccountUpdate(BaseModel):
     notes: Optional[str] = None
 
 
-@router.get("")
+@router.get("", response_model=list[AccountPublic])
 async def list_accounts(status: str = None):
     return await crud.list_accounts(status=status)
 
@@ -51,7 +107,7 @@ async def list_all_activities(limit: int = 100):
     return await crud.list_activities(limit=limit)
 
 
-@router.get("/extension-status")
+@router.get("/extension-status", response_model=ExtensionStatusPublic)
 async def get_extension_status():
     """Return which fb_uids currently have a live extension session.
 
@@ -83,13 +139,13 @@ async def get_extension_status():
     }
 
 
-@router.post("")
+@router.post("", response_model=AccountPublic)
 async def create_account(body: AccountCreate):
     kwargs = body.model_dump(exclude_none=True, exclude={"name"})
     return await crud.create_account(name=body.name, **kwargs)
 
 
-@router.get("/{account_id}")
+@router.get("/{account_id}", response_model=AccountPublic)
 async def get_account(account_id: str):
     acc = await crud.get_account(account_id)
     if not acc:
@@ -97,7 +153,7 @@ async def get_account(account_id: str):
     return acc
 
 
-@router.patch("/{account_id}")
+@router.patch("/{account_id}", response_model=AccountPublic)
 async def update_account(account_id: str, body: AccountUpdate):
     kwargs = body.model_dump(exclude_none=True)
     result = await crud.update_account(account_id, **kwargs)
