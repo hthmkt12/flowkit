@@ -17,21 +17,11 @@ jobs:
     name: Python tests
     runs-on: windows-latest
     timeout-minutes: 10
-    env:
-      ZOOPOST_ROOT_PATH: ${{ github.workspace }}/root
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: false
-
-      - name: Checkout ZooPost root scripts
-        uses: actions/checkout@v4
-        with:
-          repository: hthmkt12/facebook
-          ref: master
-          path: root
           persist-credentials: false
 
       - name: Set up Python
