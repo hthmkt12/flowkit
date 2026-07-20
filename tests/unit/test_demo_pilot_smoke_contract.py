@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parents[3] / "scripts"
+ROOT_REPO = Path(os.environ.get("ZOOPOST_ROOT_PATH", Path(__file__).parents[3]))
+SCRIPTS_DIR = ROOT_REPO / "scripts"
 SMOKE_SCRIPT = SCRIPTS_DIR / "demo-sales-local-pilot-smoke.ps1"
 EVIDENCE_SCRIPT = SCRIPTS_DIR / "demo-sales-local-pilot-evidence.ps1"
 

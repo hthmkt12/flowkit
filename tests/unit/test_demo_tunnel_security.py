@@ -7,13 +7,15 @@ proxy and that no Cloud bearer is injected into the browser path.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = REPO_ROOT.parent / "scripts"
+ROOT_REPO = Path(os.environ.get("ZOOPOST_ROOT_PATH", REPO_ROOT.parent))
+SCRIPTS_DIR = ROOT_REPO / "scripts"
 TUNNEL_START = SCRIPTS_DIR / "demo-sales-local-pilot-tunnel-start.ps1"
 TUNNEL_DASH = SCRIPTS_DIR / "demo-sales-local-pilot-tunnel-dashboard-start.ps1"
 VITE_CONFIG = REPO_ROOT / "dashboard" / "vite.config.ts"
