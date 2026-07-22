@@ -176,6 +176,13 @@ class FBClient:
         session = self.get_session_for(fb_uid)
         return bool(session and session.extension_live_actions_enabled is True)
 
+    def page_clone_session_ready(self, fb_uid: str | None) -> bool:
+        """Require an exact, fresh, authenticated session for Page Clone reads."""
+        if not fb_uid:
+            return False
+        session = self.get_session_for(fb_uid)
+        return bool(session and session.logged_in)
+
     @property
     def connected(self) -> bool:
         return bool(self._sessions)
@@ -453,6 +460,21 @@ class FBClient:
             "scrape_group",
             self._with_strategy({"groupUrl": group_url}, strategy),
             fb_uid=fb_uid,
+        )
+
+    async def scrape_page_clone(self, source_url: str, max_posts: int = 25,
+                                max_media_per_post: int = 10,
+                                deadline_seconds: int = 30, fb_uid: str = None,
+                                strategy: dict | None = None) -> dict:
+        return await self._send(
+            "scrape_page_clone",
+            self._with_strategy({
+                "sourceUrl": source_url,
+                "maxPosts": max_posts,
+                "maxMediaPerPost": max_media_per_post,
+            }, strategy),
+            fb_uid=fb_uid,
+            timeout=deadline_seconds,
         )
 
     async def get_page_state(self, fb_uid: str = None) -> dict:

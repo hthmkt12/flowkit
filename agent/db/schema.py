@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS task (
         'ADD_FRIEND','ACCEPT_FRIEND',
         'JOIN_GROUP','LEAVE_GROUP',
         'FOLLOW_PAGE','UNFOLLOW_PAGE',
-        'SCRAPE_PROFILE','SCRAPE_GROUP',
+        'SCRAPE_PROFILE','SCRAPE_GROUP','SCRAPE_PAGE_CLONE',
         'CHECK_LOGIN'
     )),
     payload         TEXT,          -- JSON payload
@@ -290,6 +290,105 @@ _MIGRATIONS = [
 ]
 
 
+_TASK_COLUMNS = (
+    "id", "account_id", "task_type", "payload", "ref_id", "status", "priority",
+    "retry_count", "max_retries", "scheduled_at", "started_at", "completed_at",
+    "result", "metrics_synced_at", "error_message", "created_at", "updated_at",
+)
+
+_TASK_TABLE_SQL = """
+CREATE TABLE task (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT REFERENCES account(id),
+    task_type       TEXT NOT NULL CHECK(task_type IN (
+        'POST_TEXT','POST_IMAGE','POST_VIDEO','POST_LINK',
+        'POST_STORY','POST_REEL','REUP_VIDEO',
+        'SEND_MESSAGE','SEND_BULK_MESSAGE',
+        'LIKE_POST','COMMENT_POST','SHARE_POST',
+        'ADD_FRIEND','ACCEPT_FRIEND',
+        'JOIN_GROUP','LEAVE_GROUP',
+        'FOLLOW_PAGE','UNFOLLOW_PAGE',
+        'SCRAPE_PROFILE','SCRAPE_GROUP','SCRAPE_PAGE_CLONE',
+        'CHECK_LOGIN'
+    )),
+    payload         TEXT,
+    ref_id          TEXT,
+    status          TEXT DEFAULT 'PENDING'
+                    CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED','CANCELLED')),
+    priority        INTEGER DEFAULT 0,
+    retry_count     INTEGER DEFAULT 0,
+    max_retries     INTEGER DEFAULT 3,
+    scheduled_at    DATETIME,
+    started_at      DATETIME,
+    completed_at    DATETIME,
+    result          TEXT,
+    metrics_synced_at DATETIME,
+    error_message   TEXT,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+)
+"""
+
+
+async def _migrate_task_table_for_page_clone(db: aiosqlite.Connection) -> None:
+    """Rebuild legacy ``task`` tables without losing queued task records.
+
+    SQLite cannot alter a CHECK constraint in place.  Keeping foreign-key
+    references unchanged during the temporary rename avoids rebuilding the
+    dependent trace/lease tables too.
+    """
+    row = await (await db.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'task'"
+    )).fetchone()
+    if not row or "SCRAPE_PAGE_CLONE" in (row[0] or ""):
+        return
+
+    legacy_columns = {
+        column[1] for column in await (await db.execute("PRAGMA table_info(task)")).fetchall()
+    }
+    copy_columns = [column for column in _TASK_COLUMNS if column in legacy_columns]
+    if not {"id", "task_type"}.issubset(copy_columns):
+        raise RuntimeError("Cannot migrate task table: required columns are missing")
+
+    # PRAGMA foreign_keys must change outside a transaction.  legacy_alter_table
+    # keeps child FK declarations pointing at the replacement table name.
+    foreign_keys = (await (await db.execute("PRAGMA foreign_keys")).fetchone())[0]
+    await db.commit()
+    await db.execute("PRAGMA foreign_keys=OFF")
+    await db.execute("PRAGMA legacy_alter_table=ON")
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        await db.execute("ALTER TABLE task RENAME TO task_legacy_page_clone")
+        await db.execute(_TASK_TABLE_SQL)
+        names = ", ".join(copy_columns)
+        await db.execute(
+            f"INSERT INTO task ({names}) SELECT {names} FROM task_legacy_page_clone"
+        )
+        await db.execute("DROP TABLE task_legacy_page_clone")
+        await db.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_task_status ON task(status);
+            CREATE INDEX IF NOT EXISTS idx_task_type ON task(task_type);
+            CREATE INDEX IF NOT EXISTS idx_task_scheduled ON task(scheduled_at);
+            CREATE INDEX IF NOT EXISTS idx_task_priority ON task(priority DESC);
+            CREATE INDEX IF NOT EXISTS idx_task_status_scheduled_priority ON task(status, scheduled_at, priority DESC);
+            CREATE INDEX IF NOT EXISTS idx_task_account_status ON task(account_id, status);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_task_zoopost_ref ON task(ref_id) WHERE ref_id LIKE 'zoopost:%';
+            CREATE INDEX IF NOT EXISTS idx_task_metrics_due ON task(status, metrics_synced_at, completed_at);
+        """)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.execute("PRAGMA legacy_alter_table=OFF")
+        await db.execute(f"PRAGMA foreign_keys={1 if foreign_keys else 0}")
+
+    violations = await (await db.execute("PRAGMA foreign_key_check")).fetchall()
+    if violations:
+        raise RuntimeError("Task table migration failed foreign-key integrity check")
+    logger.info("Migrated task table to support SCRAPE_PAGE_CLONE")
+
+
 async def init_db():
     db = await get_db()
     await db.executescript(SCHEMA)
@@ -301,6 +400,7 @@ async def init_db():
             # Safe for re-run / legacy DBs where column/index already exists.
             logger.debug("Migration skipped (%s): %s", stmt, exc)
 
+    await _migrate_task_table_for_page_clone(db)
     await db.commit()
     logger.info("Database initialized: %s", DB_PATH)
 

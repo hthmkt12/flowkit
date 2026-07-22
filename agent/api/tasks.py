@@ -1,12 +1,15 @@
 """FBKit — Task API routes."""
 import json
 from json import JSONDecodeError
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
 from agent import config
+from agent.config import MEDIA_DIR
 from agent.db import crud
+from agent.services.page_clone_contract import normalize_page_clone_task_payload
 from agent.services.safety_gate import enforce_payload, strip_server_owned_payload_fields
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -14,6 +17,23 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 def _strip_external_server_fields(payload: dict) -> dict:
     return strip_server_owned_payload_fields(payload)
+
+
+def _safe_page_clone_media_paths(post: dict) -> list[tuple[str, str]]:
+    root = Path(MEDIA_DIR).resolve()
+    paths = []
+    for item in post.get("media", []) if isinstance(post.get("media"), list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("media_path"), str):
+            continue
+        try:
+            path = Path(item["media_path"]).resolve()
+            path.relative_to(root)
+            if path.is_file():
+                media_type = "video" if item.get("type") == "video" else "image"
+                paths.append((str(path), media_type))
+        except (OSError, ValueError):
+            continue
+    return paths
 
 
 class TaskCreate(BaseModel):
@@ -43,6 +63,13 @@ class LiveArmCreate(BaseModel):
     created_by: Optional[str] = None
 
 
+class PageCloneDraftCreate(BaseModel):
+    """Operator-selected Page Clone evidence to save as local drafts."""
+    account_id: str
+    target_id: str
+    selected_post_indexes: list[int]
+
+
 @router.get("")
 async def list_tasks(status: str = None, task_type: str = None, account_id: str = None):
     return await crud.list_tasks(status=status, task_type=task_type, account_id=account_id)
@@ -64,7 +91,13 @@ async def pending_count():
 async def create_task(body: TaskCreate):
     kwargs = {}
     payload = _strip_external_server_fields(dict(body.payload or {}))
-    payload = enforce_payload(body.task_type, payload)
+    try:
+        if body.task_type == "SCRAPE_PAGE_CLONE":
+            payload = normalize_page_clone_task_payload(payload)
+        else:
+            payload = enforce_payload(body.task_type, payload)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if payload:
         kwargs["payload"] = json.dumps(payload)
     if body.ref_id:
@@ -80,6 +113,64 @@ async def create_task(body: TaskCreate):
         task_type=body.task_type,
         **kwargs,
     )
+
+
+@router.post("/{task_id}/page-clone-drafts")
+async def create_page_clone_drafts(task_id: str, body: PageCloneDraftCreate):
+    """Create reviewed local drafts only; publishing remains a separate guarded task."""
+    source_task = await crud.get_task(task_id)
+    if not source_task:
+        raise HTTPException(404, "Page Clone task not found")
+    if source_task.get("task_type") != "SCRAPE_PAGE_CLONE" or source_task.get("status") != "COMPLETED":
+        raise HTTPException(409, "Page Clone evidence must be completed before creating drafts")
+    if source_task.get("account_id") != body.account_id:
+        raise HTTPException(409, "Draft account must match the Page Clone source account")
+    target_id = body.target_id.strip()
+    if not target_id:
+        raise HTTPException(422, "target_id is required")
+    try:
+        target_id = enforce_payload(
+            "POST_TEXT", {"targetType": "PAGE", "targetId": target_id}
+        )["targetId"]
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    indexes = list(dict.fromkeys(body.selected_post_indexes))
+    if not indexes or len(indexes) > 8 or any(index < 0 for index in indexes):
+        raise HTTPException(422, "Select between 1 and 8 valid post indexes")
+
+    try:
+        result = json.loads(source_task.get("result") or "{}")
+        posts = result.get("data", {}).get("posts", [])
+    except (JSONDecodeError, AttributeError):
+        raise HTTPException(409, "Page Clone evidence is unreadable")
+    if not isinstance(posts, list):
+        raise HTTPException(409, "Page Clone evidence has no post list")
+
+    draft_contents = []
+    for index in indexes:
+        if index >= len(posts) or not isinstance(posts[index], dict):
+            raise HTTPException(422, f"Invalid post index: {index}")
+        content = str(posts[index].get("message") or "").strip()[:500]
+        cached_media = _safe_page_clone_media_paths(posts[index])
+        media_paths = [path for path, _ in cached_media]
+        if not content and not media_paths:
+            raise HTTPException(422, f"Selected post {index} has no text or cached media to draft")
+        post_type = "VIDEO" if any(media_type == "video" for _, media_type in cached_media) else "IMAGE"
+        draft_contents.append((content, media_paths[:10], post_type))
+
+    drafts = [
+        await crud.create_post(
+            account_id=body.account_id,
+            post_type=post_type if media_paths else "TEXT",
+            content=content,
+            media_paths=json.dumps(media_paths) if media_paths else None,
+            target_type="PAGE",
+            target_id=target_id,
+            status="DRAFT",
+        )
+        for content, media_paths, post_type in draft_contents
+    ]
+    return {"source_task_id": task_id, "drafts": drafts}
 
 
 @router.post("/{task_id}/approve")

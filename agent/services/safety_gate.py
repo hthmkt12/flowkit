@@ -7,6 +7,7 @@ worker dispatch, and future task producers apply the same safety defaults.
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
 
 from agent import config
@@ -86,6 +87,12 @@ def enforce_payload(task_type: str, payload: dict | None) -> dict:
                 safe_payload["groupUrl"] = f"https://facebook.com/groups/{target_id}"
             else:
                 raise ValueError("group targetType requires a non-empty groupUrl or targetId")
+    elif safe_payload.get("targetType") == "PAGE":
+        target_id = safe_payload.get("targetId")
+        if not isinstance(target_id, str) or not target_id.strip():
+            raise ValueError("page targetType requires a non-empty targetId")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", target_id.strip()):
+            raise ValueError("page targetType targetId must be a Facebook page id or slug")
     elif safe_payload.get("targetType") == "POST":
         post_url = safe_payload.get("postUrl")
         if not post_url or not isinstance(post_url, str) or not post_url.strip():

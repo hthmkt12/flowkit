@@ -1093,6 +1093,19 @@ def test_group_target_type_requires_group_url():
     assert payload["groupUrl"] == "https://facebook.com/groups/test"
 
 
+def test_page_target_type_requires_destination_target_id():
+    from agent.services.safety_gate import enforce_payload
+
+    with pytest.raises(ValueError, match="page targetType requires a non-empty targetId"):
+        enforce_payload("POST_TEXT", {"targetType": "PAGE"})
+
+    payload = enforce_payload("POST_TEXT", {"targetType": "PAGE", "targetId": "destination-page"})
+    assert payload["targetId"] == "destination-page"
+
+    with pytest.raises(ValueError, match="Facebook page id or slug"):
+        enforce_payload("POST_TEXT", {"targetType": "PAGE", "targetId": "page/?redirect=evil"})
+
+
 def test_post_target_type_requires_post_url():
     from agent.services.safety_gate import enforce_payload
     with pytest.raises(ValueError, match="post targetType requires a non-empty postUrl"):

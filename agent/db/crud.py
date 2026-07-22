@@ -15,6 +15,7 @@ from agent.db.schema import get_db
 from agent import config
 from agent.config import DATA_ENCRYPTION_KEY
 from agent.services.safety_gate import MUTATING_TASK_TYPES, dry_run_from_payload, enforce_payload, is_mutating_task, strip_server_owned_payload_fields
+from agent.services.page_clone_contract import redact_page_clone_task_payload
 from agent.utils.time import utc_now, utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -266,6 +267,19 @@ async def claim_scheduled_post(post_id: str, before: str) -> dict | None:
         "UPDATE post SET status = 'POSTING', updated_at = ? "
         "WHERE id = ? AND status = 'SCHEDULED' AND scheduled_at <= ?",
         (now, post_id, before),
+    )
+    await db.commit()
+    if cur.rowcount != 1:
+        return None
+    return await get_post(post_id)
+
+
+async def claim_draft_post_for_queue(post_id: str) -> dict | None:
+    """Atomically transition one reviewed draft to queued status."""
+    db = await get_db()
+    cur = await db.execute(
+        "UPDATE post SET status = 'SCHEDULED', updated_at = ? WHERE id = ? AND status = 'DRAFT'",
+        (utc_now_iso(), post_id),
     )
     await db.commit()
     if cur.rowcount != 1:
@@ -596,7 +610,17 @@ def _task_requires_live_account_lease(row) -> bool:
 
 
 async def cancel_task(task_id: str) -> dict | None:
-    return await update_task(task_id, status="CANCELLED")
+    task = await get_task(task_id)
+    if not task:
+        return None
+    updates = {"status": "CANCELLED"}
+    if task.get("task_type") == "SCRAPE_PAGE_CLONE":
+        try:
+            payload = json.loads(task.get("payload") or "{}")
+        except JSONDecodeError:
+            payload = {}
+        updates["payload"] = json.dumps(redact_page_clone_task_payload(payload))
+    return await update_task(task_id, **updates)
 
 
 # ─── FB Group ───────────────────────────────────────────────
