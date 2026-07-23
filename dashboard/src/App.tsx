@@ -23,6 +23,7 @@ import AutoPostFanpagePage from './pages/AutoPostFanpagePage'
 import AgentOnboardingPage from './pages/AgentOnboardingPage'
 import ProjectsPage from './pages/ProjectsPage'
 import CampaignsPage from './pages/CampaignsPage'
+import WorkflowLabPage from './pages/WorkflowLabPage'
 
 type DemoNavItem = {
   to: string
@@ -42,6 +43,7 @@ const NAV: DemoNavItem[] = [
   { to: '/accounts', icon: Users, label: 'Local Profiles', exact: false, element: <AccountsPage /> },
   { to: '/tasks', icon: FlaskConical, label: 'Local Tasks', exact: false, element: <TasksPage /> },
   { to: '/reports', icon: BarChart3, label: 'Evidence Log', exact: false, element: <LogsPage /> },
+  { to: '/workflow-lab', icon: FlaskConical, label: 'Workflow Lab', exact: false, element: <WorkflowLabPage /> },
   { to: '/seeding', icon: Zap, label: 'Seeding (Coming Soon)', exact: false, element: <SeedingPage />, future: true },
   { to: '/comments', icon: MessageCircle, label: 'Comments (Coming Soon)', exact: false, element: <SeedingPage />, future: true },
   { to: '/inbox', icon: Inbox, label: 'Inbox (Coming Soon)', exact: false, element: <TasksPage />, future: true },

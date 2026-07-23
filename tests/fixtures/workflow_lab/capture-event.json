@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "url": "https://www.facebook.com/api/post?access_token=fixture-secret",
+  "status": 200,
+  "resourceType": "XHR",
+  "timingMs": 18
+}
