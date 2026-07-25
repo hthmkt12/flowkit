@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { CheckCircle2, ClipboardList, FileText, Radio, RefreshCw, ShieldCheck, Wifi } from 'lucide-react'
+import { CheckCircle2, ClipboardList, Clock, FileText, Radio, RefreshCw, ShieldCheck, Wifi, WifiOff } from 'lucide-react'
 import { fetchAPI } from '../api/client'
 import { LocalPilotChecklist } from '../components/local-pilot-checklist'
 import { LocalPilotDemoScript } from '../components/local-pilot-demo-script'
@@ -23,6 +23,7 @@ export default function LogsPage() {
   const [state, setState] = useState<EvidenceState>(emptyState)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState<string | null>(null)
+  const [evidenceTimestamp, setEvidenceTimestamp] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -39,6 +40,7 @@ export default function LogsPage() {
         await fetchAPI<AgentSessionReadiness[]>(`/api/agent-installations/${item.id}/sessions`),
       ] as const))
       setState({ summary, jobs, audit, channels, installations, sessions: Object.fromEntries(sessionPairs) })
+      setEvidenceTimestamp(new Date().toISOString())
       setMessage(null)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Khong tai duoc evidence log.')
@@ -60,10 +62,21 @@ export default function LogsPage() {
         <div>
           <div style={{ fontSize: '22px', fontWeight: 850 }}>Evidence Log</div>
           <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Browser-safe proof for the local dry-run pilot: readiness, jobs, audit trail, and safety boundary.</div>
+          {evidenceTimestamp && (
+            <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Clock size={11} /> Last refreshed: {new Date(evidenceTimestamp).toLocaleString('vi-VN')}
+            </div>
+          )}
         </div>
-        <button type="button" onClick={load} disabled={loading} style={buttonStyle('#2563eb')}>
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 700, color: readySessions.length > 0 ? '#16a34a' : 'var(--muted)' }}>
+            {readySessions.length > 0 ? <Wifi size={13} /> : <WifiOff size={13} />}
+            {readySessions.length > 0 ? 'Dry-run session ONLINE' : 'Dry-run session OFFLINE'}
+          </span>
+          <button type="button" onClick={load} disabled={loading} style={buttonStyle('#2563eb')}>
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </div>
       </div>
 
       {message && <div style={noticeStyle('#d97706')}>{message}</div>}

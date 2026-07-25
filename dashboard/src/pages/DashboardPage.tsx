@@ -3,7 +3,9 @@ import { Activity, BarChart3, CheckCircle, Clock, Radio, ShieldCheck, Users, Wif
 import { fetchAPI } from '../api/client'
 import { useWebSocket } from '../api/useWebSocket'
 import SafetyGateStatus from '../components/SafetyGateStatus'
-import type { AgentStatus, DashboardPerformance, DashboardSummary, WSEvent } from '../types'
+import { PilotReadinessStrip } from '../components/pilot-readiness-strip'
+import { isEvidenceFresh } from '../components/pilot-readiness'
+import type { AgentStatus, AgentInstallation, AgentSessionReadiness, ChannelSelectorResponse, DashboardPerformance, DashboardSummary, WSEvent } from '../types'
 
 interface LiveEvent {
   id: number
@@ -57,19 +59,38 @@ export default function DashboardPage() {
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [events, setEvents] = useState<LiveEvent[]>([])
+  const [channels, setChannels] = useState<ChannelSelectorResponse | null>(null)
+  const [agentSessions, setAgentSessions] = useState<AgentSessionReadiness[]>([])
   const { isConnected, lastEvent } = useWebSocket()
 
   const load = useCallback(async () => {
-    const [status, dashboardSummary, dashboardPerformance] = await Promise.allSettled([
+    const [status, dashboardSummary, dashboardPerformance, channelSelector, installations] = await Promise.allSettled([
       fetchAPI<AgentStatus>('/api/status'),
       fetchAPI<DashboardSummary>('/api/dashboard/summary'),
       fetchAPI<DashboardPerformance>('/api/dashboard/performance?range=7d&limit=30'),
+      fetchAPI<ChannelSelectorResponse>('/api/channels/selector?platform=facebook&channel_type=fanpage&limit=5'),
+      fetchAPI<AgentInstallation[]>('/api/agent-installations'),
     ])
 
     setAgentStatus(status.status === 'fulfilled' ? status.value : null)
     setSummary(dashboardSummary.status === 'fulfilled' ? dashboardSummary.value : null)
     setPerformance(dashboardPerformance.status === 'fulfilled' ? dashboardPerformance.value : null)
+    setChannels(channelSelector.status === 'fulfilled' ? channelSelector.value : null)
     setLoadError(dashboardSummary.status === 'rejected' || dashboardPerformance.status === 'rejected' ? 'Không tải được dữ liệu ZooPost cloud.' : null)
+
+    // Fetch agent sessions to check publish-dry-run capability
+    if (installations.status === 'fulfilled') {
+      const insts = installations.value
+      const sessionResults = await Promise.allSettled(
+        insts.map(inst => fetchAPI<AgentSessionReadiness[]>(`/api/agent-installations/${inst.id}/sessions`))
+      )
+      const allSessions = sessionResults
+        .filter((r): r is PromiseFulfilledResult<AgentSessionReadiness[]> => r.status === 'fulfilled')
+        .flatMap(r => r.value)
+      setAgentSessions(allSessions)
+    } else {
+      setAgentSessions([])
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -96,6 +117,16 @@ export default function DashboardPage() {
   ]
 
   const maxChartValue = Math.max(1, ...(performance?.line_chart ?? []).map(row => Math.max(row.scheduled, row.published, row.failed)))
+
+  // Pilot readiness props
+  const safety = agentStatus?.safety_gate
+  const liveDisabled = safety ? !safety.live_actions_enabled : null
+  const fbSessionLoggedIn = (agentStatus?.extension?.sessions ?? []).some(s => s.logged_in && s.fb_uid && !s.stale)
+  const agentHasPublishDryRun = agentSessions.some(s => s.capability_names?.includes('publish-dry-run'))
+  const selectableChannelCount = channels?.items.filter(c => c.is_selectable).length ?? 0
+  const cloudReachable = summary !== null
+  const fbkitReachable = agentStatus !== null
+  const evidenceFresh = isEvidenceFresh(performance?.activity_log)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -133,6 +164,17 @@ export default function DashboardPage() {
       )}
 
       <SafetyGateStatus status={agentStatus} />
+
+      <PilotReadinessStrip
+        cloudReachable={cloudReachable}
+        fbkitReachable={fbkitReachable}
+        dashboardReachable={true}
+        fbSessionLoggedIn={fbSessionLoggedIn}
+        agentHasPublishDryRun={agentHasPublishDryRun}
+        liveDisabled={liveDisabled}
+        evidenceFresh={evidenceFresh}
+        selectableChannels={selectableChannelCount}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px' }}>
         {cards.map(card => (
