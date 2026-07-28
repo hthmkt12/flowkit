@@ -45,6 +45,7 @@ READ_ONLY_METHODS = [
     "scrape_live_comments",
     "get_page_state",
     "get_post_metrics",
+    "scrape_page_clone",
 ]
 
 
@@ -96,6 +97,20 @@ def test_extension_live_actions_disabled_by_default():
     assert "const EXTENSION_LIVE_ACTIONS_ENABLED = false;" in source
     assert "function shouldForceExtensionDryRun(params)" in source
     assert "!EXTENSION_LIVE_ACTIONS_ENABLED" in source
+
+
+def test_text_post_handler_supports_explicit_page_destination():
+    source = _source()
+    handler = _handler_body(source, "handlePostText")
+    assert 'targetType === "PAGE" && targetId' in handler
+    assert "https://www.facebook.com/${targetId}" in handler
+
+
+def test_page_clone_media_uses_exact_host_suffix_allowlist():
+    source = _source()
+    assert "const isAllowedMediaHost" in source
+    assert 'host.endsWith(".fbcdn.net")' in source
+    assert "!isAllowedMediaHost(parsed.hostname)" in source
 
 
 def test_background_reports_extension_live_guard_state():
@@ -165,6 +180,15 @@ def test_router_dispatches_read_only_post_metrics_handler():
     assert "async function handleGetPostMetrics(params)" in source
     assert 'case "get_post_metrics":' in body
     assert "result = await handleGetPostMetrics(params);" in body
+
+
+def test_router_dispatches_page_clone_as_read_only():
+    source = _source()
+    body = _router_body(source)
+
+    assert "async function handleScrapePageClone(" in source
+    assert 'case "scrape_page_clone":' in body
+    assert "result = await handleScrapePageClone(params);" in body
 
 
 def test_mutating_handlers_check_dry_run_before_dangerous_dom_actions():

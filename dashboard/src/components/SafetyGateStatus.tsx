@@ -42,6 +42,17 @@ function InfoPill({ label, value, safe }: { label: string; value: string; safe: 
   )
 }
 
+/** Human-readable reasons why live actions are blocked in the current phase. */
+function liveBlockReasons(liveEnabled: boolean, dryRunDefault: boolean, approvalRequired: boolean, liveAuthReady: boolean): string[] {
+  const reasons: string[] = []
+  if (!liveEnabled) reasons.push('LIVE_ACTIONS_ENABLED=false - live mutation disabled by phase policy')
+  if (dryRunDefault) reasons.push('DRY_RUN_DEFAULT=true - all tasks forced to dry-run')
+  if (approvalRequired) reasons.push('APPROVAL_REQUIRED=true - manual approval gate is active')
+  if (!liveAuthReady) reasons.push('Live auth not ready - API/WS auth and live arm prerequisites not met')
+  reasons.push('Live mode requires docs/live-mode-readiness.md checklist completion + operator approval')
+  return reasons
+}
+
 export default function SafetyGateStatus({ status }: SafetyGateStatusProps) {
   const safety = status?.safety_gate
   const safetyKnown = Boolean(safety)
@@ -85,6 +96,8 @@ export default function SafetyGateStatus({ status }: SafetyGateStatusProps) {
     )
   }
 
+  const blockReasons = liveBlockReasons(liveEnabled, dryRunDefault, approvalRequired, liveAuthReady)
+
   return (
     <div style={{
       background: protectedMode ? 'linear-gradient(135deg, rgba(34,197,94,0.12), rgba(59,130,246,0.08))' : 'linear-gradient(135deg, rgba(239,68,68,0.14), rgba(245,158,11,0.08))',
@@ -118,6 +131,25 @@ export default function SafetyGateStatus({ status }: SafetyGateStatusProps) {
         <InfoPill label="live auth ready" value={liveAuthReady ? 'ready' : 'not ready'} safe={!liveEnabled || liveAuthReady} />
         <InfoPill label="active live arms" value={activeLiveArmCount ? `${activeLiveArmCount} active` : 'none'} safe={activeLiveArmCount === 0} />
       </div>
+
+      {protectedMode && (
+        <div style={{
+          background: 'rgba(34,197,94,0.06)',
+          border: '1px solid rgba(34,197,94,0.2)',
+          borderRadius: '8px',
+          padding: '10px 12px',
+          fontSize: '11px',
+          color: 'var(--muted)',
+          lineHeight: 1.5,
+        }}>
+          <strong style={{ color: 'var(--green)' }}>Live is blocked because:</strong>
+          <ul style={{ margin: '4px 0 0 16px', padding: 0, listStyle: 'disc' }}>
+            {blockReasons.map((reason, i) => (
+              <li key={i}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

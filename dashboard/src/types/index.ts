@@ -199,6 +199,7 @@ export interface DashboardPerformance {
     severity: string
     message: string
     target_id: string | null
+    created_at: string | null
   }>
 }
 

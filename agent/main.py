@@ -210,6 +210,7 @@ from agent.api.groups import router as groups_router
 from agent.api.seeding import router as seeding_router
 from agent.api.spy import router as spy_router
 from agent.api.strategies import router as strategies_router
+from agent.api.workflows import router as workflows_router
 
 api_dependencies = [Depends(require_api_key)]
 
@@ -221,6 +222,7 @@ app.include_router(groups_router, prefix="/api", dependencies=api_dependencies)
 app.include_router(seeding_router, prefix="/api", dependencies=api_dependencies)
 app.include_router(spy_router, prefix="/api", dependencies=api_dependencies)
 app.include_router(strategies_router, prefix="/api", dependencies=api_dependencies)
+app.include_router(workflows_router, prefix="/api", dependencies=api_dependencies)
 
 
 # ─── Root & Status ───────────────────────────────────────────

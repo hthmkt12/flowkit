@@ -22,9 +22,31 @@ from agent.services.human_delay import action_delay, long_delay, get_session_man
 from agent.services.event_bus import event_bus
 from agent.services.notifier import get_notifier
 from agent.services.safety_gate import dry_run_from_payload, enforce_payload, is_mutating_task
+from agent.services.page_clone_contract import (
+    normalize_page_clone_task_payload,
+    redact_page_clone_result,
+    redact_page_clone_task_payload,
+)
 from agent.utils.time import utc_from_timestamp_iso, utc_now_iso, utc_now_ms
 
 logger = logging.getLogger(__name__)
+
+
+def _persistable_result(task_type: str, result: dict) -> dict:
+    """Redact page-clone URLs/IDs before any task result is persisted."""
+    if task_type != "SCRAPE_PAGE_CLONE" or not isinstance(result, dict):
+        return result
+    data = result.get("data") if isinstance(result.get("data"), dict) else result
+    try:
+        redacted = redact_page_clone_result(data)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc), "code": "INVALID_PAGE_CLONE_RESULT"}
+    return {"success": bool(result.get("success", True)), "data": redacted}
+
+
+async def _task_is_cancelled(task_id: str) -> bool:
+    current = await crud.get_task(task_id)
+    return bool(current and current.get("status") == "CANCELLED")
 
 # Map task_type → daily counter field in account table
 _COUNTER_MAP = {
@@ -396,6 +418,11 @@ class WorkerController:
                     strategy.get("fail_count", 0),
                 )
 
+            if await _task_is_cancelled(task_id):
+                logger.info("Task %s was cancelled before dispatch", task_id[:8])
+                await event_bus.emit("task_cancelled", {"task_id": task_id, "type": task_type})
+                return
+
             # Mark as processing
             await crud.update_task(task_id, status="PROCESSING",
                                    started_at=utc_now_iso())
@@ -413,17 +440,27 @@ class WorkerController:
             result = await self._dispatch(task_type, payload, task, fb_uid=fb_uid,
                                           strategy=strategy)
 
+            if await _task_is_cancelled(task_id):
+                logger.info("Task %s was cancelled while dispatching", task_id[:8])
+                if task_type == "SCRAPE_PAGE_CLONE":
+                    from agent.services.page_clone_media import cleanup_page_clone_media
+                    cleanup_page_clone_media(task_id)
+                await event_bus.emit("task_cancelled", {"task_id": task_id, "type": task_type})
+                return
+
             if result.get("error"):
                 raise Exception(result["error"])
 
             # Success
             duration_ms = utc_now_ms() - started_at_ms
-            await crud.update_task(
-                task_id,
-                status="COMPLETED",
-                completed_at=utc_now_iso(),
-                result=json.dumps(result),
-            )
+            completed_update = {
+                "status": "COMPLETED",
+                "completed_at": utc_now_iso(),
+                "result": json.dumps(_persistable_result(task_type, result)),
+            }
+            if task_type == "SCRAPE_PAGE_CLONE":
+                completed_update["payload"] = json.dumps(redact_page_clone_task_payload(payload))
+            await crud.update_task(task_id, **completed_update)
             
             from agent.services.health_monitor import get_health_monitor
             if task.get("account_id"):
@@ -516,11 +553,16 @@ class WorkerController:
                     max_retries,
                 )
             else:
+                terminal_update = {
+                    "status": "FAILED",
+                    "completed_at": utc_now_iso(),
+                    "error_message": error_message,
+                }
+                if task_type == "SCRAPE_PAGE_CLONE":
+                    terminal_update["payload"] = json.dumps(redact_page_clone_task_payload(payload))
                 await crud.update_task(
                     task_id,
-                    status="FAILED",
-                    completed_at=utc_now_iso(),
-                    error_message=error_message,
+                    **terminal_update,
                 )
                 await event_bus.emit(
                     "task_failed",
@@ -797,6 +839,37 @@ class WorkerController:
                 fb_uid=fb_uid,
                 strategy=strategy_hints,
             )
+
+        elif task_type == "SCRAPE_PAGE_CLONE":
+            try:
+                request = normalize_page_clone_task_payload(payload)
+            except ValueError as exc:
+                return {"error": str(exc), "code": "INVALID_PAGE_CLONE_REQUEST"}
+            if not client.page_clone_session_ready(fb_uid):
+                return {
+                    "error": "Page Clone requires an exact, fresh logged-in Facebook session",
+                    "code": "PAGE_CLONE_SESSION_UNAVAILABLE",
+                }
+            result = await client.scrape_page_clone(
+                source_url=request["sourceUrl"],
+                max_posts=request["maxPosts"],
+                max_media_per_post=request["maxMediaPerPost"],
+                deadline_seconds=request["deadlineSeconds"],
+                fb_uid=fb_uid,
+                strategy=strategy_hints,
+            )
+            if request["downloadMedia"] and isinstance(result, dict) and not result.get("error"):
+                from agent.services.page_clone_media import cache_page_clone_media
+                try:
+                    result = await asyncio.wait_for(
+                        cache_page_clone_media(result, task.get("id", "page-clone")),
+                        timeout=request["deadlineSeconds"],
+                    )
+                except asyncio.TimeoutError:
+                    data = result.get("data") if isinstance(result.get("data"), dict) else result
+                    if isinstance(data, dict):
+                        data.setdefault("warnings", []).append("media download deadline exceeded")
+            return result
 
         elif task_type == "REUP_VIDEO":
             from agent.services.downloader import download_video

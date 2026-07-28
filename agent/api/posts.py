@@ -123,6 +123,47 @@ async def list_scheduled_posts():
     return await crud.list_scheduled_posts()
 
 
+@router.post("/{post_id}/queue")
+async def queue_post(post_id: str):
+    """Queue one reviewed draft through the standard dry-run/approval gate."""
+    post = await crud.get_post(post_id)
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post.get("status") != "DRAFT":
+        raise HTTPException(409, "Only DRAFT posts can be queued")
+
+    task_type = f"POST_{post.get('post_type', 'TEXT')}"
+    payload = {
+        "content": post.get("content", ""),
+        "targetType": post.get("target_type", "TIMELINE"),
+        "targetId": post.get("target_id"),
+    }
+    if post.get("media_paths"):
+        try:
+            payload["mediaPaths"] = json.loads(post["media_paths"])
+        except (json.JSONDecodeError, TypeError):
+            raise HTTPException(409, "Post media paths are unreadable")
+    try:
+        payload = enforce_payload(task_type, payload)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    queued_post = await crud.claim_draft_post_for_queue(post_id)
+    if not queued_post:
+        raise HTTPException(409, "Post was already queued or changed")
+    try:
+        task = await crud.create_task(
+            account_id=queued_post["account_id"],
+            task_type=task_type,
+            payload=json.dumps(payload),
+            ref_id=queued_post["id"],
+        )
+    except Exception:
+        await crud.update_post(post_id, status="DRAFT")
+        raise
+    return {"post": queued_post, "task": task}
+
+
 @router.get("/{post_id}")
 async def get_post(post_id: str):
     post = await crud.get_post(post_id)

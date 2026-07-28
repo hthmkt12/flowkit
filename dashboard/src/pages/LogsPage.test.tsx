@@ -64,4 +64,27 @@ describe('LogsPage evidence view', () => {
     })
     expect(screen.getByText(/dry_run=true, redacted_fields=6/)).toBeTruthy()
   })
+
+  it('shows evidence refresh timestamp and dry-run session online indicator', async () => {
+    render(<LogsPage />)
+
+    expect(await screen.findByText('Ready agent sessions')).toBeTruthy()
+    expect(screen.getByText(/Dry-run session ONLINE/i)).toBeTruthy()
+    expect(screen.getByText(/Last refreshed:/i)).toBeTruthy()
+  })
+
+  it('shows dry-run session offline when no ready sessions', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/dashboard/summary') return jsonResponse({ kpis: { scheduled_posts: 0, published_posts: 0, total_channels: 0, total_reach: 0 }, status_bar: { buffer_api: 'not_configured', imgbb_api: 'not_configured', pancake: 'not_synced' }, scheduled_targets: 0, published_targets: 0, failed_targets: 0, total_channels: 0 })
+      if (url === '/api/publish-jobs?limit=8') return jsonResponse([])
+      if (url === '/api/audit-logs?limit=12') return jsonResponse({ items: [], limit: 12 })
+      if (url === '/api/channels/selector?limit=20') return jsonResponse({ items: [], limit: 20 })
+      if (url === '/api/agent-installations') return jsonResponse([])
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('not found') } as Response)
+    }))
+
+    render(<LogsPage />)
+
+    expect(await screen.findByText(/Dry-run session OFFLINE/i)).toBeTruthy()
+  })
 })

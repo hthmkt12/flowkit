@@ -205,6 +205,9 @@ async function handlePostText(params) {
     if (targetType === "GROUP" && targetId) {
       window.location.href = `https://www.facebook.com/groups/${targetId}`;
       await sleep(3000);
+    } else if (targetType === "PAGE" && targetId) {
+      window.location.href = `https://www.facebook.com/${targetId}`;
+      await sleep(3000);
     }
 
     // Click the composer ("What's on your mind?")
@@ -645,6 +648,95 @@ async function handleScrapeProfile(params) {
   } catch (e) {
     return { error: `Scrape failed: ${e.message}` };
   }
+}
+
+/**
+ * Read a bounded page snapshot for the Page Clone evidence flow.
+ * This handler never navigates, uploads, clicks, types, or fetches media URLs.
+ */
+async function handleScrapePageClone(params = {}) {
+  const sourceUrl = String(params.sourceUrl || "").trim();
+  const maxPosts = Math.min(25, Math.max(1, Number(params.maxPosts) || 25));
+  const maxMediaPerPost = Math.min(10, Math.max(1, Number(params.maxMediaPerPost) || 10));
+  const isAllowedMediaHost = (hostname) => {
+    const host = String(hostname || "").toLowerCase();
+    return host === "facebook.com" || host.endsWith(".facebook.com")
+      || host.endsWith(".fbcdn.net") || host.endsWith(".fbsbx.com");
+  };
+  if (!/^https:\/\/(?:[a-z0-9-]+\.)*facebook\.com\//i.test(sourceUrl)) {
+    return { error: "sourceUrl must be an HTTPS Facebook page URL" };
+  }
+  if (!/^https:\/\/(?:[a-z0-9-]+\.)*facebook\.com\//i.test(window.location.href)) {
+    return { error: "Current tab is not a Facebook page" };
+  }
+  const pageKey = (value) => {
+    const parsed = new URL(value);
+    const queryId = parsed.searchParams.get("id");
+    if (queryId) return `id:${queryId}`;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    return parts[0]?.toLowerCase() === "pages" ? `id:${parts[2] || ""}` : `slug:${(parts[0] || "").toLowerCase()}`;
+  };
+  if (pageKey(sourceUrl) !== pageKey(window.location.href)) {
+    return { error: "Open the source Facebook page in the active tab before cloning" };
+  }
+
+  const profileName = document.querySelector('meta[property="og:title"]')?.content?.trim()
+    || document.querySelector("h1")?.textContent?.trim()
+    || document.title.trim();
+  const profile = {
+    id: "",
+    name: profileName.slice(0, 500),
+    category: document.querySelector('[data-pagelet="ProfileTilesBio"]')?.textContent?.trim()?.slice(0, 500) || "",
+  };
+  const posts = [];
+  const seen = new Set();
+  for (const article of document.querySelectorAll('[role="article"]')) {
+    if (posts.length >= maxPosts) break;
+    const link = [...article.querySelectorAll("a[href]")]
+      .map(anchor => anchor.href)
+      .find(href => /facebook\.com\/[^/]+\/posts\/|facebook\.com\/[^/]+\/videos\//i.test(href));
+    const id = (link || "").match(/(?:posts|videos)\/(\d+)/i)?.[1] || "";
+    const key = id || (link || article.textContent || "").slice(0, 120);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const imageMedia = [...article.querySelectorAll("img[src]")].map(image => {
+      const url = String(image.currentSrc || image.src || "");
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "https:" || !isAllowedMediaHost(parsed.hostname)) return null;
+        return { url, type: "image" };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    const videoMedia = [...article.querySelectorAll("video")].map(video => {
+      const url = String(video.currentSrc || video.src || "");
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "https:" || !isAllowedMediaHost(parsed.hostname)) return null;
+        return { url, type: "video" };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    const media = [...imageMedia, ...videoMedia].slice(0, maxMediaPerPost);
+    posts.push({
+      id,
+      message: String(article.textContent || "").trim().slice(0, 500),
+      permalink: link || "",
+      created_time: "",
+      media,
+    });
+  }
+  return {
+    success: true,
+    data: {
+      source_url: window.location.href,
+      profile,
+      posts,
+      warnings: posts.length ? [] : ["No visible page posts found"],
+    },
+  };
 }
 
 /**
@@ -1569,6 +1661,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       case "get_post_metrics":
         result = await handleGetPostMetrics(params);
+        break;
+      case "scrape_page_clone":
+        result = await handleScrapePageClone(params);
         break;
       default:
         result = { error: `Unknown method: ${method}` };

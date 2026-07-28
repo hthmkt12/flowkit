@@ -46,4 +46,21 @@ describe('SafetyGateStatus', () => {
     expect(screen.getByText(/live auth ready: not ready/i)).toBeTruthy()
     expect(screen.getByText(/active live arms: none/i)).toBeTruthy()
   })
+
+  it('shows live block reasons in protected dry-run mode', () => {
+    render(<SafetyGateStatus status={status()} />)
+
+    expect(screen.getByText(/Live is blocked because/i)).toBeTruthy()
+    expect(screen.getByText(/LIVE_ACTIONS_ENABLED=false/i)).toBeTruthy()
+    expect(screen.getByText(/DRY_RUN_DEFAULT=true/i)).toBeTruthy()
+    expect(screen.getByText(/APPROVAL_REQUIRED=true/i)).toBeTruthy()
+    expect(screen.getByText(/Live auth not ready/i)).toBeTruthy()
+    expect(screen.getByText(/live-mode-readiness/i)).toBeTruthy()
+  })
+
+  it('does not show block reasons when live is enabled (not protected)', () => {
+    render(<SafetyGateStatus status={status({ live_actions_enabled: true, dry_run_default: false, approval_required: false, live_auth_ready: true })} />)
+
+    expect(screen.queryByText(/Live is blocked because/i)).toBeNull()
+  })
 })
