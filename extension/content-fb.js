@@ -740,16 +740,84 @@ async function handleScrapePageClone(params = {}) {
 }
 
 /**
- * Get current page state.
+ * Read browser-visible safety state for the live abort gate.
+ * Only boolean warnings are exported; no page text or auth material leaves the tab.
+ * Performance: URL + title first; scan at most 4KB of textContent only when URL is ambiguous.
  */
-function handleGetPageState() {
-  const loggedIn = !!document.querySelector('[aria-label="Your profile"]')
-                || !!document.querySelector('[aria-label="Account"]');
+function getPageSafetyState() {
+  const href = window.location.href;
+  const url = href.toLowerCase();
+  let checkpointWarning = /facebook\.com\/(checkpoint|recover|security)\b/i.test(url);
+  let loginWarning = /facebook\.com\/(login|login_attempt|logged_out)\b/i.test(url);
+
+  if (!checkpointWarning || !loginWarning) {
+    const title = (document.title || "").toLowerCase();
+    checkpointWarning = checkpointWarning
+      || title.includes("security check")
+      || title.includes("checkpoint")
+      || title.includes("xác nhận danh tính");
+    loginWarning = loginWarning
+      || title.includes("log in")
+      || title.includes("đăng nhập");
+  }
+
+  // Body scan is expensive on Facebook SPAs — only when URL/title did not already decide both flags.
+  if (!checkpointWarning || !loginWarning) {
+    const sample = (document.body?.textContent || "").slice(0, 4000).toLowerCase();
+    if (!checkpointWarning) {
+      checkpointWarning = sample.includes("your account has been locked")
+        || sample.includes("security check")
+        || sample.includes("account is temporarily locked")
+        || sample.includes("xác nhận danh tính");
+    }
+    if (!loginWarning) {
+      loginWarning = sample.includes("log in to facebook")
+        || sample.includes("đăng nhập facebook");
+    }
+  }
+
+  const loggedIn = !!document.querySelector('[aria-label="Your profile"], [aria-label="Account"], [data-pagelet="ProfileBrowser"]');
+  return { loggedIn, checkpointWarning, loginWarning, url: href };
+}
+
+/**
+ * Read-only selector preflight for S5. It never clicks, types, navigates, or uploads.
+ */
+function handleLivePreflight(params = {}) {
+  const safety = getPageSafetyState();
+  const selectorMap = {
+    POST_TEXT: [
+      '[aria-label="Create a post"]',
+      "[aria-label=\"What's on your mind?\"]",
+      '[name="xhpc_message_text"]',
+      'div[role="button"][tabindex="0"]',
+    ],
+  };
+  const selectors = selectorMap[String(params.taskType || "").toUpperCase()];
+  const selectorConfident = Boolean(
+    selectors && selectors.some((selector) => document.querySelector(selector))
+  );
   return {
     success: true,
     data: {
-      loggedIn,
-      url: window.location.href,
+      ...safety,
+      selectorConfident,
+      // Duplicate-content truth belongs to the server-side S3 fingerprint gate.
+      // The local browser deliberately reports unknown rather than guessing.
+      duplicateContentRisk: null,
+    },
+  };
+}
+
+/**
+ * Get current page state.
+ */
+function handleGetPageState() {
+  const safety = getPageSafetyState();
+  return {
+    success: true,
+    data: {
+      ...safety,
       title: document.title,
     },
   };
@@ -1659,6 +1727,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "get_page_state":
         result = handleGetPageState();
         break;
+      case "live_preflight":
+        result = handleLivePreflight(params);
+        break;
       case "get_post_metrics":
         result = await handleGetPostMetrics(params);
         break;
@@ -1677,18 +1748,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ─── Auto-report page state to background ───────────────────
+// Throttled + change-only: FB SPA navigations must not spam WS with full DOM scans.
 
-(function reportState() {
-  const loggedIn = !!document.querySelector('[aria-label="Your profile"]')
-                || !!document.querySelector('[aria-label="Account"]');
+(function reportStateLoop() {
+  const MIN_INTERVAL_MS = 5000;
+  let lastSentKey = "";
+  let lastSentAt = 0;
+  let pending = false;
 
-  chrome.runtime.sendMessage({
-    type: "page_state",
-    data: {
-      loggedIn,
-      url: window.location.href,
-    },
-  }).catch(() => {});
+  function snapshotKey(safety) {
+    return [safety.loggedIn, safety.checkpointWarning, safety.loginWarning, safety.url].join("|");
+  }
+
+  function emit(force) {
+    if (pending) return;
+    const now = Date.now();
+    if (!force && now - lastSentAt < MIN_INTERVAL_MS) {
+      pending = true;
+      setTimeout(() => {
+        pending = false;
+        emit(false);
+      }, MIN_INTERVAL_MS - (now - lastSentAt));
+      return;
+    }
+    const safety = getPageSafetyState();
+    const key = snapshotKey(safety);
+    if (!force && key === lastSentKey) return;
+    lastSentKey = key;
+    lastSentAt = Date.now();
+    chrome.runtime.sendMessage({ type: "page_state", ...safety }).catch(() => {});
+  }
+
+  emit(true);
+
+  // SPA URL changes (pushState/replaceState/popstate)
+  const wrapHistory = (method) => {
+    const orig = history[method];
+    history[method] = function (...args) {
+      const ret = orig.apply(this, args);
+      emit(false);
+      return ret;
+    };
+  };
+  wrapHistory("pushState");
+  wrapHistory("replaceState");
+  window.addEventListener("popstate", () => emit(false));
+
+  // Title changes often lag SPA route updates; cheap signal without body scan storm.
+  const titleEl = document.querySelector("title");
+  if (titleEl && typeof MutationObserver !== "undefined") {
+    new MutationObserver(() => emit(false)).observe(titleEl, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  }
 })();
 
 console.log("[FBKit] Content script loaded on:", window.location.href);

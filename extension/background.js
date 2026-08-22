@@ -45,16 +45,33 @@ async function buildWsUrl() {
  * Read the Facebook `c_user` cookie — contains the logged-in user's UID.
  * Returns null if not logged in or cookie not accessible.
  */
-async function getFbUid() {
+let cachedFbUid = { value: null, at: 0 };
+const FB_UID_CACHE_MS = 30000;
+
+async function getFbUid(force = false) {
+  const now = Date.now();
+  if (!force && now - cachedFbUid.at < FB_UID_CACHE_MS) {
+    return cachedFbUid.value;
+  }
   try {
     const cookie = await chrome.cookies.get({
       url: "https://www.facebook.com",
       name: "c_user",
     });
-    return cookie ? cookie.value : null;
+    cachedFbUid = { value: cookie ? cookie.value : null, at: now };
+    return cachedFbUid.value;
   } catch {
+    cachedFbUid = { value: null, at: now };
     return null;
   }
+}
+
+if (chrome.cookies?.onChanged) {
+  chrome.cookies.onChanged.addListener((changeInfo) => {
+    if (changeInfo.cookie?.name === "c_user") {
+      cachedFbUid = { value: null, at: 0 };
+    }
+  });
 }
 
 // ─── WebSocket Connection ───────────────────────────────────
@@ -255,8 +272,30 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// Listen for messages from content script (e.g. to use debugger)
+// Listen for messages from content script (safety telemetry / debugger).
+let lastPageStateWireKey = "";
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "page_state") {
+    if (ws && ws.readyState === 1) {
+      getFbUid().then((fbUid) => {
+        const payload = {
+          type: "page_state",
+          fb_uid: fbUid,
+          loggedIn: Boolean(message.loggedIn),
+          checkpointWarning: Boolean(message.checkpointWarning),
+          loginWarning: Boolean(message.loginWarning),
+          url: String(message.url || ""),
+        };
+        const key = [payload.fb_uid, payload.loggedIn, payload.checkpointWarning, payload.loginWarning, payload.url].join("|");
+        if (key === lastPageStateWireKey) return;
+        lastPageStateWireKey = key;
+        ws.send(JSON.stringify(payload));
+      }).catch(() => {});
+    }
+    return false;
+  }
+
   if (message.action === "set_file_input") {
     const tabId = sender.tab.id;
     const { selector, filePaths } = message;
