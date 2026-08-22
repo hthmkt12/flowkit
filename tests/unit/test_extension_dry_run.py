@@ -132,6 +132,12 @@ def test_background_connects_when_service_worker_loads():
     assert 'message?.action === "reconnect_agent"' in background
     assert "CONNECTING_STALE_MS" in background
     assert "async function connectWS(force = false)" in background
+    assert "RECONNECT_BASE_MS" in background
+    assert "RECONNECT_MAX_MS" in background
+    assert "connectInFlight" in background
+    assert "ignoreCloseCount" in background
+    assert "function scheduleReconnect()" in background
+    assert "if (reconnectTimer) return" in background
 
 
 def test_background_reports_profile_identity_and_heartbeat():

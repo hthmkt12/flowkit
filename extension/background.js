@@ -8,8 +8,11 @@
 
 const WS_BASE_URL = "ws://127.0.0.1:9222";
 const AGENT_API = "http://127.0.0.1:8100";
-const RECONNECT_DELAY_MS = 3000;
-const RECONNECT_JITTER_MS = 2000;
+/** Base delay for exponential reconnect (ms). */
+const RECONNECT_BASE_MS = 1000;
+/** Cap so recovery stays responsive when agent returns. */
+const RECONNECT_MAX_MS = 30000;
+const RECONNECT_JITTER_MS = 500;
 const PING_INTERVAL_MS = 25000;
 const EXTENSION_LIVE_ACTIONS_ENABLED = false;
 
@@ -17,6 +20,10 @@ let ws = null;
 let pingTimer = null;
 let reconnectTimer = null;
 let reconnectAttempt = 0;
+/** Prevents parallel connectWS from alarm + onclose + popup. */
+let connectInFlight = false;
+/** onclose events to ignore after intentional dispose (async close race). */
+let ignoreCloseCount = 0;
 
 async function getApiKey() {
   const data = await chrome.storage.local.get(["fbkitApiKey"]);
@@ -79,115 +86,162 @@ if (chrome.cookies?.onChanged) {
 let wsConnectingSince = 0;
 const CONNECTING_STALE_MS = 8000;
 
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function clearPingTimer() {
+  if (pingTimer) {
+    clearInterval(pingTimer);
+    pingTimer = null;
+  }
+}
+
+/**
+ * Close the current socket without queuing a reconnect (used when replacing it).
+ */
+function disposeSocket(reason) {
+  if (!ws) return;
+  const socket = ws;
+  ws = null;
+  wsConnectingSince = 0;
+  ignoreCloseCount += 1;
+  try {
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.close(1000, reason);
+    } else {
+      ignoreCloseCount = Math.max(0, ignoreCloseCount - 1);
+    }
+  } catch {
+    ignoreCloseCount = Math.max(0, ignoreCloseCount - 1);
+  }
+}
+
 async function connectWS(force = false) {
-  // MV3 SW can leave a socket stuck in CONNECTING; force-close and retry.
+  if (connectInFlight && !force) return;
+
   if (ws) {
     const state = ws.readyState;
     if (state === WebSocket.OPEN && !force) return;
     if (state === WebSocket.CONNECTING && !force) {
       if (Date.now() - wsConnectingSince < CONNECTING_STALE_MS) return;
     }
-    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
-      try {
-        ws.close(1000, force ? "force reconnect" : "stale connecting");
-      } catch {
-        /* ignore */
-      }
-    }
-    ws = null;
   }
 
+  connectInFlight = true;
+  clearReconnectTimer();
+  clearPingTimer();
+  disposeSocket(force ? "force reconnect" : "stale connecting");
+
+  let socket;
   try {
     const wsUrl = await buildWsUrl();
     wsConnectingSince = Date.now();
-    ws = new WebSocket(wsUrl);
+    socket = new WebSocket(wsUrl);
+    ws = socket;
   } catch (e) {
     console.error("[FBKit] WS create error:", e.message);
+    connectInFlight = false;
     scheduleReconnect();
     return;
   }
 
-  ws.onopen = async () => {
+  socket.onopen = async () => {
+    if (ws !== socket) return;
     console.log("[FBKit] Connected to Agent");
-    clearTimeout(reconnectTimer);
+    connectInFlight = false;
+    clearReconnectTimer();
     reconnectAttempt = 0;
     wsConnectingSince = 0;
 
-    // Announce ourselves with FB UID (from c_user cookie)
     const fbUid = await getFbUid(true);
     const profileIdentity = await getProfileIdentity();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "extension_ready",
-        fb_uid: fbUid,
-        loggedIn: !!fbUid,
-        extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
-        profileId: profileIdentity.profileId,
-        profileName: profileIdentity.profileName,
-        url: "",
-      }));
-    }
+    if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({
+      type: "extension_ready",
+      fb_uid: fbUid,
+      loggedIn: !!fbUid,
+      extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
+      profileId: profileIdentity.profileId,
+      profileName: profileIdentity.profileName,
+      url: "",
+    }));
 
-    // Start ping keepalive
-    clearInterval(pingTimer);
+    clearPingTimer();
     pingTimer = setInterval(async () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        const currentFbUid = await getFbUid();
-        const identity = await getProfileIdentity();
-        ws.send(JSON.stringify({
-          type: "ping",
-          fb_uid: currentFbUid,
-          loggedIn: !!currentFbUid,
-          extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
-          profileId: identity.profileId,
-          profileName: identity.profileName,
-        }));
-      }
+      if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+      const currentFbUid = await getFbUid();
+      const identity = await getProfileIdentity();
+      if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({
+        type: "ping",
+        fb_uid: currentFbUid,
+        loggedIn: !!currentFbUid,
+        extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
+        profileId: identity.profileId,
+        profileName: identity.profileName,
+      }));
     }, PING_INTERVAL_MS);
   };
 
-  ws.onmessage = async (event) => {
+  socket.onmessage = async (event) => {
+    if (ws !== socket) return;
     let data;
     try {
       data = JSON.parse(event.data);
     } catch {
       return;
     }
-
-    // Handle pong (keepalive response)
     if (data.type === "pong") return;
-
-    // Dispatch command to content script
     if (data.id && data.method) {
       const result = await dispatchToContentScript(data);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          id: data.id,
-          ...result,
-        }));
+      if (ws === socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ id: data.id, ...result }));
       }
     }
   };
 
-  ws.onclose = () => {
+  socket.onclose = () => {
+    if (ignoreCloseCount > 0) {
+      ignoreCloseCount -= 1;
+      if (ws === socket) {
+        ws = null;
+        wsConnectingSince = 0;
+        clearPingTimer();
+      }
+      return;
+    }
+    if (ws === socket) {
+      ws = null;
+      wsConnectingSince = 0;
+      clearPingTimer();
+    }
+    connectInFlight = false;
     console.log("[FBKit] Disconnected from Agent");
-    clearInterval(pingTimer);
-    ws = null;
-    wsConnectingSince = 0;
     scheduleReconnect();
   };
 
-  ws.onerror = (e) => {
-    console.error("[FBKit] WS error:", e.message || "unknown");
+  socket.onerror = () => {
+    // onclose follows; avoid double scheduleReconnect here
+    console.error("[FBKit] WS error");
   };
 }
 
 function scheduleReconnect() {
-  clearTimeout(reconnectTimer);
+  if (reconnectTimer) return;
   reconnectAttempt += 1;
-  const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS);
-  const delay = RECONNECT_DELAY_MS + jitter + Math.min(reconnectAttempt * 500, 5000);
-  reconnectTimer = setTimeout(connectWS, delay);
+  const exp = Math.min(
+    RECONNECT_MAX_MS,
+    RECONNECT_BASE_MS * (2 ** Math.min(reconnectAttempt - 1, 5)),
+  );
+  const delay = exp + Math.floor(Math.random() * RECONNECT_JITTER_MS);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWS(false);
+  }, delay);
 }
 
 // ─── Command Dispatcher ─────────────────────────────────────
