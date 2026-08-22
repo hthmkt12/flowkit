@@ -1,7 +1,7 @@
 """Tests for Safety Gate v1 dry-run enforcement."""
 
 import json
-from datetime import date
+from datetime import date, timedelta, timezone, datetime
 
 import pytest
 from fastapi import HTTPException
@@ -15,6 +15,10 @@ from agent.services.fb_client import FBClient
 from agent.services.auto_seed import AutoSeeder, SeedCampaign
 from agent.services.scheduler import Scheduler
 from agent.worker import processor
+from agent.services.safety_gate import (
+    evaluate_live_abort_conditions,
+    evaluate_local_live_conditions,
+)
 
 
 @pytest.fixture
@@ -1130,4 +1134,229 @@ def test_lead_target_type_requires_profile_url():
     payload = enforce_payload("ADD_FRIEND", {"targetType": "LEAD", "profileUrl": "https://facebook.com/profile.php?id=123"})
     assert payload["targetType"] == "LEAD"
     assert payload["profileUrl"] == "https://facebook.com/profile.php?id=123"
+
+
+@pytest.fixture
+def live_guard_snapshot():
+    now = datetime(2026, 8, 14, 8, 0, tzinfo=timezone.utc)
+    return {
+        "now": now,
+        "account_id": "account-1",
+        "task_type": "POST_TEXT",
+        "account": {"fb_uid": "fb-1"},
+        "live_arm": {
+            "id": "arm-1",
+            "account_id": "account-1",
+            "task_types": ["POST_TEXT"],
+            "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            "revoked_at": None,
+        },
+        "live_lease": {
+            "account_id": "account-1",
+            "task_id": "task-1",
+            "node_id": "node-1",
+            "expires_at": (now + timedelta(minutes=10)).isoformat(),
+        },
+        "extension_session": {
+            "fb_uid": "fb-1",
+            "logged_in": True,
+            "stale": False,
+            "checkpoint_warning": False,
+            "login_warning": False,
+            "extension_live_actions_enabled": True,
+        },
+    }
+
+
+def _evaluate_live_guard(snapshot):
+    return evaluate_local_live_conditions(**snapshot)
+
+
+def _enable_live_guard_flags(monkeypatch):
+    monkeypatch.setattr("agent.config.LIVE_ACTIONS_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.API_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
+
+
+def test_local_live_guard_requires_all_flags_enabled(live_guard_snapshot, monkeypatch):
+    for flag, reason in (
+        ("LIVE_ACTIONS_ENABLED", "live_actions_disabled"),
+        ("API_AUTH_ENABLED", "api_auth_disabled"),
+        ("WS_AUTH_ENABLED", "ws_auth_disabled"),
+    ):
+        _enable_live_guard_flags(monkeypatch)
+        monkeypatch.setattr(f"agent.config.{flag}", False, raising=False)
+        result = _evaluate_live_guard(live_guard_snapshot)
+        assert result.satisfied is False
+        assert result.reasons == [reason]
+
+
+def test_local_live_requires_active_arm(live_guard_snapshot, monkeypatch):
+    _enable_live_guard_flags(monkeypatch)
+    live_guard_snapshot["live_arm"] = None
+    result = _evaluate_live_guard(live_guard_snapshot)
+    assert result.satisfied is False
+    assert "active_live_arm_missing" in result.reasons
+
+
+def test_local_live_requires_matching_account(live_guard_snapshot, monkeypatch):
+    _enable_live_guard_flags(monkeypatch)
+    live_guard_snapshot["account"]["fb_uid"] = "fb-other"
+    result = _evaluate_live_guard(live_guard_snapshot)
+    assert result.satisfied is False
+    assert "extension_account_identity_mismatch" in result.reasons
+
+
+def test_local_live_requires_lease(live_guard_snapshot, monkeypatch):
+    _enable_live_guard_flags(monkeypatch)
+    live_guard_snapshot["live_lease"] = None
+    result = _evaluate_live_guard(live_guard_snapshot)
+    assert result.satisfied is False
+    assert "live_account_lease_missing" in result.reasons
+
+
+def test_local_live_requires_fresh_session(live_guard_snapshot, monkeypatch):
+    _enable_live_guard_flags(monkeypatch)
+    live_guard_snapshot["extension_session"]["stale"] = True
+    result = _evaluate_live_guard(live_guard_snapshot)
+    assert result.satisfied is False
+    assert "extension_session_stale" in result.reasons
+
+
+@pytest.mark.parametrize("warning_field", ["checkpoint_warning", "login_warning"])
+def test_local_live_blocks_on_checkpoint_warning(live_guard_snapshot, monkeypatch, warning_field):
+    _enable_live_guard_flags(monkeypatch)
+    live_guard_snapshot["extension_session"][warning_field] = True
+    result = _evaluate_live_guard(live_guard_snapshot)
+    assert result.satisfied is False
+    assert "checkpoint_or_login_warning" in result.reasons
+
+
+def test_local_live_requires_extension_guard_enabled(live_guard_snapshot, monkeypatch):
+    _enable_live_guard_flags(monkeypatch)
+    live_guard_snapshot["extension_session"]["extension_live_actions_enabled"] = False
+    result = _evaluate_live_guard(live_guard_snapshot)
+    assert result.satisfied is False
+    assert "extension_live_action_guard_disabled" in result.reasons
+
+
+@pytest.fixture
+def live_abort_snapshot():
+    now = datetime(2026, 8, 14, 8, 0, tzinfo=timezone.utc)
+    return {
+        "now": now,
+        "account_id": "account-1",
+        "expected_fb_uid": "fb-1",
+        "extension_session": {
+            "fb_uid": "fb-1",
+            "logged_in": True,
+            "stale": False,
+            "last_seen_age_s": 5,
+            "checkpoint_warning": False,
+            "login_warning": False,
+            "extension_live_actions_enabled": True,
+            "current_url": "https://www.facebook.com/example-page",
+        },
+        "expected_target_url": "https://www.facebook.com/example-page",
+        "current_url": "https://www.facebook.com/example-page",
+        "selector_confident": True,
+        "duplicate_content_risk": False,
+    }
+
+
+def test_abort_on_checkpoint(live_abort_snapshot):
+    live_abort_snapshot["extension_session"]["checkpoint_warning"] = True
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "facebook_checkpoint_or_login_warning" in result.reasons
+
+
+def test_abort_on_target_mismatch(live_abort_snapshot):
+    live_abort_snapshot["current_url"] = "https://www.facebook.com/other-page"
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "unexpected_page_or_target" in result.reasons
+
+
+def test_abort_on_missing_heartbeat(live_abort_snapshot):
+    live_abort_snapshot["extension_session"]["last_seen_age_s"] = 61
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "missing_live_guard_heartbeat" in result.reasons
+
+
+def test_abort_on_stale_session(live_abort_snapshot):
+    live_abort_snapshot["extension_session"]["stale"] = True
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "stale_extension_session" in result.reasons
+
+
+def test_abort_on_selector_uncertainty(live_abort_snapshot):
+    live_abort_snapshot["selector_confident"] = False
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "selector_uncertainty" in result.reasons
+
+
+def test_abort_on_duplicate_content_risk(live_abort_snapshot):
+    live_abort_snapshot["duplicate_content_risk"] = True
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "duplicate_content_risk_unknown_or_present" in result.reasons
+
+
+def test_missing_duplicate_evidence_fails_closed(live_abort_snapshot):
+    live_abort_snapshot["duplicate_content_risk"] = None
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "duplicate_content_risk_unknown_or_present" in result.reasons
+
+
+def test_no_retry_if_post_may_have_succeeded(live_abort_snapshot):
+    live_abort_snapshot["post_may_have_succeeded"] = True
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "post_may_have_succeeded_no_retry" in result.reasons
+
+
+def test_live_abort_passes_only_with_complete_safety_snapshot(live_abort_snapshot):
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is False
+    assert result.reasons == []
+
+
+def test_live_abort_fails_closed_when_session_is_missing(live_abort_snapshot):
+    live_abort_snapshot["extension_session"] = None
+    result = evaluate_live_abort_conditions(**live_abort_snapshot)
+    assert result.abort is True
+    assert "extension_session_missing" in result.reasons
+
+
+def test_no_retry_if_post_may_have_succeeded():
+    assert processor._classify_error("Live abort: post may have succeeded; retry is forbidden") == "NON_RETRYABLE"
+
+def test_local_live_fails_closed_mid_run_when_a_condition_flips(live_guard_snapshot, monkeypatch):
+    _enable_live_guard_flags(monkeypatch)
+    first = _evaluate_live_guard(live_guard_snapshot)
+    assert first.satisfied is True
+
+    live_guard_snapshot["extension_session"]["stale"] = True
+    second = _evaluate_live_guard(live_guard_snapshot)
+    assert second.satisfied is False
+    assert "extension_session_stale" in second.reasons
+
+
+def test_local_live_guard_reports_multiple_failures(live_guard_snapshot, monkeypatch):
+    _enable_live_guard_flags(monkeypatch)
+    live_guard_snapshot["live_arm"] = None
+    live_guard_snapshot["live_lease"] = None
+    live_guard_snapshot["extension_session"]["stale"] = True
+    live_guard_snapshot["extension_session"]["extension_live_actions_enabled"] = False
+    result = _evaluate_live_guard(live_guard_snapshot)
+    assert result.satisfied is False
+    assert "active_live_arm_missing" in result.reasons
+    assert "live_account_lease_missing" in result.reasons
+    assert "extension_session_stale" in result.reasons
+    assert "extension_live_action_guard_disabled" in result.reasons
 

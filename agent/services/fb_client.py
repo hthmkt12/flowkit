@@ -28,9 +28,13 @@ class ExtensionSession:
     extension_live_actions_enabled: Optional[bool] = None
     profile_id: Optional[str] = None
     profile_name: Optional[str] = None
+    checkpoint_warning: bool = False
+    login_warning: bool = False
+    current_url: Optional[str] = None
     connected_at: float = field(default_factory=time.time)
     last_seen_at: float = field(default_factory=time.time)
     _pending: dict = field(default_factory=dict)
+    connection_order: int = 0
 
     @property
     def uptime_s(self) -> int:
@@ -45,6 +49,9 @@ class ExtensionSession:
             "extension_live_actions_enabled": self.extension_live_actions_enabled,
             "profile_id": self.profile_id,
             "profile_name": self.profile_name,
+            "checkpoint_warning": self.checkpoint_warning,
+            "login_warning": self.login_warning,
+            "current_url": self.current_url,
             "uptime_s": self.uptime_s,
             "last_seen_age_s": age_s,
             "stale": stale,
@@ -67,12 +74,14 @@ class FBClient:
         # Connection stats
         self._total_connects = 0
         self._total_disconnects = 0
+        self._next_connection_order = 0
 
     # ─── Session Management ──────────────────────────────────
 
     def set_extension(self, ws, fb_uid: Optional[str] = None) -> ExtensionSession:
         """Called when a new extension WS connects."""
-        session = ExtensionSession(ws=ws, fb_uid=fb_uid)
+        self._next_connection_order += 1
+        session = ExtensionSession(ws=ws, fb_uid=fb_uid, connection_order=self._next_connection_order)
         self._sessions[ws] = session
         self._total_connects += 1
         logger.info("Extension connected #%d (fb_uid=%s)", self._total_connects, fb_uid or "unknown")
@@ -86,6 +95,9 @@ class FBClient:
         extension_live_actions_enabled: Optional[bool] = None,
         profile_id: Optional[str] = None,
         profile_name: Optional[str] = None,
+        checkpoint_warning: bool = False,
+        login_warning: bool = False,
+        current_url: Optional[str] = None,
     ):
         """Update fb_uid / login status after extension_ready message."""
         session = self._sessions.get(ws)
@@ -95,6 +107,9 @@ class FBClient:
             session.extension_live_actions_enabled = extension_live_actions_enabled
             session.profile_id = profile_id
             session.profile_name = profile_name
+            session.checkpoint_warning = bool(checkpoint_warning)
+            session.login_warning = bool(login_warning)
+            session.current_url = current_url
             session.last_seen_at = time.time()
             logger.info("Extension session registered fb_uid=%s, logged_in=%s", fb_uid, logged_in)
 
@@ -129,6 +144,9 @@ class FBClient:
             data.get("extensionLiveActionsEnabled"),
             data.get("profileId"),
             data.get("profileName"),
+            bool(data.get("checkpointWarning", session.checkpoint_warning)),
+            bool(data.get("loginWarning", session.login_warning)),
+            data.get("url", session.current_url),
         )
         return True
 
@@ -156,7 +174,7 @@ class FBClient:
             matches = [session for session in self._sessions.values() if session.fb_uid == fb_uid]
             fresh_matches = [session for session in matches if not self._is_stale(session)]
             if fresh_matches:
-                return max(fresh_matches, key=lambda session: session.last_seen_at)
+                return max(fresh_matches, key=lambda session: (session.last_seen_at, session.connection_order))
             if matches:
                 logger.warning("All extension sessions for fb_uid=%s are stale", fb_uid)
                 return None
@@ -233,6 +251,21 @@ class FBClient:
             profile_name = data.get("profileName")
             if fb_uid and session:
                 self.update_session(ws, fb_uid, logged_in, extension_live_actions_enabled, profile_id, profile_name)
+            return
+
+        if msg_type == "page_state":
+            if session:
+                self.update_session(
+                    ws,
+                    data.get("fb_uid") or data.get("uid") or session.fb_uid,
+                    bool(data.get("loggedIn", session.logged_in)),
+                    data.get("extensionLiveActionsEnabled", session.extension_live_actions_enabled),
+                    data.get("profileId", session.profile_id),
+                    data.get("profileName", session.profile_name),
+                    bool(data.get("checkpointWarning", False)),
+                    bool(data.get("loginWarning", False)),
+                    data.get("url"),
+                )
             return
 
         if msg_type == "pong":
@@ -479,6 +512,15 @@ class FBClient:
 
     async def get_page_state(self, fb_uid: str = None) -> dict:
         return await self._send("get_page_state", {}, fb_uid=fb_uid)
+
+    async def live_preflight(self, task_type: str, fb_uid: str = None) -> dict:
+        """Run read-only browser safety checks immediately before live dispatch."""
+        return await self._send(
+            "live_preflight",
+            {"taskType": task_type},
+            fb_uid=fb_uid,
+            timeout=15,
+        )
 
     async def get_post_metrics(self, external_post_id: str, fb_uid: str = None) -> dict:
         return await self._send("get_post_metrics", {"externalPostId": external_post_id}, fb_uid=fb_uid)

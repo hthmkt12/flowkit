@@ -1058,3 +1058,93 @@ async def test_recovered_terminal_results_skip_reported_rows_before_limit(db, mo
 
     assert len(socket.sent) == 1
     assert socket.sent[0]["dispatchId"] == "dispatch-unreported"
+
+
+@pytest.mark.asyncio
+async def test_report_terminal_results_marker_stays_false_when_send_raises(db, monkeypatch):
+    from agent.db import crud
+    from agent.services import zoopost_cloud_agent as gateway
+
+    async def raising_send(websocket, session, dispatch_id, task):
+        raise ConnectionError("lost ACK before marker")
+
+    monkeypatch.setattr(gateway, "send_gateway_task_result", raising_send)
+
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    task = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True})
+    await crud.update_task(task["id"], status="COMPLETED", result=json.dumps({"externalPostId": "post-1"}))
+    pending = {"dispatch-1": task["id"]}
+    socket = FakeCloudSocket([])
+    session = gateway.GatewaySession(session_id="s", session_generation=1, connection_id="c")
+
+    with pytest.raises(ConnectionError):
+        await gateway._report_terminal_results(socket, session, pending)
+
+    updated = await crud.get_task(task["id"])
+    assert json.loads(updated["result"]).get("zoopostResultReported") is not True
+    assert pending == {"dispatch-1": task["id"]}
+
+
+@pytest.mark.asyncio
+async def test_report_terminal_results_retry_after_ack_loss_sends_one_terminal_effect(db, monkeypatch):
+    from agent.db import crud
+    from agent.services import zoopost_cloud_agent as gateway
+
+    send_calls = []
+
+    async def flaky_send(websocket, session, dispatch_id, task):
+        send_calls.append((dispatch_id, task.get("id")))
+        if len(send_calls) == 1:
+            raise asyncio.TimeoutError("lost ACK")
+        return {"type": "agent_dispatch_result_ack", "messageId": "result-1", "targetId": "target-1"}
+
+    monkeypatch.setattr(gateway, "send_gateway_task_result", flaky_send)
+
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    task = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True})
+    await crud.update_task(task["id"], status="COMPLETED", result=json.dumps({"externalPostId": "post-1"}))
+    pending = {"dispatch-1": task["id"]}
+    session = gateway.GatewaySession(session_id="s", session_generation=1, connection_id="c")
+
+    socket = FakeCloudSocket([])
+    with pytest.raises(asyncio.TimeoutError):
+        await gateway._report_terminal_results(socket, session, pending)
+    updated = await crud.get_task(task["id"])
+    assert json.loads(updated["result"]).get("zoopostResultReported") is not True
+    assert pending == {"dispatch-1": task["id"]}
+
+    socket = FakeCloudSocket([])
+    await gateway._report_terminal_results(socket, session, pending)
+    updated = await crud.get_task(task["id"])
+    assert json.loads(updated["result"])["zoopostResultReported"] is True
+    assert pending == {}
+    assert send_calls == [("dispatch-1", task["id"]), ("dispatch-1", task["id"])]
+
+
+@pytest.mark.asyncio
+async def test_recovered_terminal_results_surfaces_second_page_after_limit(db, monkeypatch):
+    """Multi-page recovery: second call surfaces unreported task beyond limit."""
+    from agent import config
+    from agent.db import crud
+    from agent.services.zoopost_cloud_agent import GatewaySession, _report_recovered_terminal_results
+
+    monkeypatch.setattr(config, "ZOOPOST_GATEWAY_DISPATCH_LIMIT", 1)
+    account = await crud.create_account("Page A", fb_uid="page-1")
+    first = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True}, ref_id="zoopost:dispatch-first")
+    await crud.update_task(first["id"], status="COMPLETED", result=json.dumps({"externalPostId": "post-1"}))
+    second = await crud.create_task(account["id"], "POST_TEXT", payload={"dryRun": True}, ref_id="zoopost:dispatch-second")
+    await crud.update_task(second["id"], status="COMPLETED", result=json.dumps({"externalPostId": "post-2"}))
+
+    socket = FakeCloudSocket([{"type": "agent_dispatch_result_ack", "messageId": "result-1", "targetId": "target-1"}])
+    session = GatewaySession(session_id="session-1", session_generation=1, connection_id="conn-1")
+
+    # First call: limit=1, only first task reported
+    await _report_recovered_terminal_results(socket, session)
+    assert len(socket.sent) == 1
+    assert socket.sent[0]["dispatchId"] == "dispatch-first"
+
+    # Second call: first is now reported, second should surface
+    socket2 = FakeCloudSocket([{"type": "agent_dispatch_result_ack", "messageId": "result-2", "targetId": "target-2"}])
+    await _report_recovered_terminal_results(socket2, session)
+    assert len(socket2.sent) == 1
+    assert socket2.sent[0]["dispatchId"] == "dispatch-second"

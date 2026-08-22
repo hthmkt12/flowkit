@@ -183,6 +183,19 @@ async def test_exact_routing_prefers_fresh_duplicate_fb_uid_session():
     assert fresh_ws.sent[0]["method"] == "post_text"
 
 
+def test_exact_routing_uses_newer_connection_when_duplicate_heartbeats_tie():
+    older_ws = FakeWS()
+    newer_ws = FakeWS()
+    client = FBClient(stale_after_s=30)
+    older_session = client.set_extension(older_ws, fb_uid="fb-dup")
+    newer_session = client.set_extension(newer_ws, fb_uid="fb-dup")
+    heartbeat_at = time.time()
+    older_session.last_seen_at = heartbeat_at
+    newer_session.last_seen_at = heartbeat_at
+
+    assert client.get_session_for("fb-dup") is newer_session
+
+
 @pytest.mark.asyncio
 async def test_extension_status_excludes_stale_session_from_online_accounts(db_ready, monkeypatch):
     account = await crud.create_account(name="Profile Account", fb_uid="fb-1")

@@ -1,3 +1,6 @@
+> SUPERSEDED — see ../../docs/project-roadmap-unified.md for current status.
+> This file is kept for history only; do not update it further.
+
 # FBKit Project Roadmap
 
 Last updated: 2026-05-26

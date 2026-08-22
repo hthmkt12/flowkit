@@ -21,7 +21,12 @@ from agent.services.fb_client import get_fb_client
 from agent.services.human_delay import action_delay, long_delay, get_session_manager
 from agent.services.event_bus import event_bus
 from agent.services.notifier import get_notifier
-from agent.services.safety_gate import dry_run_from_payload, enforce_payload, is_mutating_task
+from agent.services.safety_gate import (
+    dry_run_from_payload,
+    enforce_payload,
+    evaluate_live_abort_conditions,
+    is_mutating_task,
+)
 from agent.services.page_clone_contract import (
     normalize_page_clone_task_payload,
     redact_page_clone_result,
@@ -85,6 +90,9 @@ def _classify_error(error_message: str) -> str:
         "unsupported",
         "unknown task type",
         "validation",
+        "may have succeeded",
+        "possible success",
+        "post may have succeeded",
     )
     if any(k in lower for k in non_retryable_keywords):
         return "NON_RETRYABLE"
@@ -431,6 +439,36 @@ class WorkerController:
             if is_mutating_task(task_type) and not is_dry_run and not fb_uid:
                 raise ValueError("Validation: fb_uid required for live mutating task")
 
+            if is_mutating_task(task_type) and not is_dry_run:
+                client = get_fb_client()
+                live_session = client.get_session_for(fb_uid)
+                session_snapshot = live_session.to_dict(client._stale_after_s) if live_session else None
+                preflight = await client.live_preflight(task_type, fb_uid=fb_uid)
+                if preflight.get("error"):
+                    raise RuntimeError(f"Live abort: preflight failed: {preflight['error']}")
+                preflight_data = preflight.get("data") if isinstance(preflight.get("data"), dict) else {}
+                session_snapshot = {
+                    **(session_snapshot or {}),
+                    "logged_in": preflight_data.get("loggedIn", (session_snapshot or {}).get("logged_in")),
+                    "checkpoint_warning": preflight_data.get("checkpointWarning", (session_snapshot or {}).get("checkpoint_warning")),
+                    "login_warning": preflight_data.get("loginWarning", (session_snapshot or {}).get("login_warning")),
+                    "current_url": preflight_data.get("url", (session_snapshot or {}).get("current_url")),
+                } if session_snapshot else None
+                expected_target_url = None
+                if payload.get("targetType") == "PAGE" and payload.get("targetId"):
+                    expected_target_url = f"https://www.facebook.com/{payload['targetId']}"
+                abort = evaluate_live_abort_conditions(
+                    account_id=task.get("account_id") or "",
+                    expected_fb_uid=fb_uid,
+                    extension_session=session_snapshot,
+                    expected_target_url=expected_target_url,
+                    current_url=preflight_data.get("url", (session_snapshot or {}).get("current_url")),
+                    selector_confident=preflight_data.get("selectorConfident"),
+                    duplicate_content_risk=preflight_data.get("duplicateContentRisk"),
+                )
+                if abort.abort:
+                    raise RuntimeError("Live abort: " + ", ".join(abort.reasons))
+
             # Human-like delay before action
             delay_result = action_delay()
             if inspect.isawaitable(delay_result):
@@ -439,6 +477,15 @@ class WorkerController:
             # Dispatch to handler
             result = await self._dispatch(task_type, payload, task, fb_uid=fb_uid,
                                           strategy=strategy)
+
+            if is_mutating_task(task_type) and not is_dry_run:
+                post_may_have_succeeded = bool(
+                    result.get("mayHaveSucceeded")
+                    or result.get("postMayHaveSucceeded")
+                    or result.get("possibleSuccess")
+                )
+                if post_may_have_succeeded:
+                    raise RuntimeError("Live abort: post may have succeeded; retry is forbidden")
 
             if await _task_is_cancelled(task_id):
                 logger.info("Task %s was cancelled while dispatching", task_id[:8])
@@ -505,6 +552,10 @@ class WorkerController:
 
             error_message = str(e)[:500]
             error_class = _classify_error(error_message)
+            if is_mutating_task(task_type) and not dry_run_from_payload(payload):
+                lower_error = error_message.lower()
+                if any(marker in lower_error for marker in ("timeout", "connection reset", "connection closed")):
+                    error_class = "NON_RETRYABLE"
 
             # Record structured trace for failure (AutoBrowse pattern)
             await crud.create_trace(
