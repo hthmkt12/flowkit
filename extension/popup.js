@@ -92,11 +92,25 @@ async function checkStatus() {
 }
 
 // Button handlers
-document.getElementById("btn-check").addEventListener("click", checkStatus);
+document.getElementById("btn-check").addEventListener("click", async () => {
+  try {
+    await chrome.runtime.sendMessage({ action: "reconnect_agent" });
+  } catch {
+    /* SW may still be waking */
+  }
+  await checkStatus();
+});
 
 document.getElementById("btn-dashboard").addEventListener("click", () => {
   chrome.tabs.create({ url: `${AGENT_API}/docs` });
 });
 
-// Auto-check on popup open
-checkStatus();
+// Auto-check on popup open — nudge SW reconnect first (MV3 idle).
+(async () => {
+  try {
+    await chrome.runtime.sendMessage({ action: "reconnect_agent" });
+  } catch {
+    /* ignore */
+  }
+  await checkStatus();
+})();

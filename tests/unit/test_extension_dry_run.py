@@ -127,6 +127,11 @@ def test_background_connects_when_service_worker_loads():
     storage_index = background.index("chrome.storage.onChanged.addListener")
     load_connect_index = background.index("connectWS();", startup_index + 1)
     assert startup_index < load_connect_index < storage_index
+    assert 'chrome.alarms.create("ws-keepalive"' in background
+    assert 'alarm.name === "ws-keepalive"' in background
+    assert 'message?.action === "reconnect_agent"' in background
+    assert "CONNECTING_STALE_MS" in background
+    assert "async function connectWS(force = false)" in background
 
 
 def test_background_reports_profile_identity_and_heartbeat():

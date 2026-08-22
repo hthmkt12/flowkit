@@ -76,11 +76,30 @@ if (chrome.cookies?.onChanged) {
 
 // ─── WebSocket Connection ───────────────────────────────────
 
-async function connectWS() {
-  if (ws && ws.readyState <= 1) return;
+let wsConnectingSince = 0;
+const CONNECTING_STALE_MS = 8000;
+
+async function connectWS(force = false) {
+  // MV3 SW can leave a socket stuck in CONNECTING; force-close and retry.
+  if (ws) {
+    const state = ws.readyState;
+    if (state === WebSocket.OPEN && !force) return;
+    if (state === WebSocket.CONNECTING && !force) {
+      if (Date.now() - wsConnectingSince < CONNECTING_STALE_MS) return;
+    }
+    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
+      try {
+        ws.close(1000, force ? "force reconnect" : "stale connecting");
+      } catch {
+        /* ignore */
+      }
+    }
+    ws = null;
+  }
 
   try {
     const wsUrl = await buildWsUrl();
+    wsConnectingSince = Date.now();
     ws = new WebSocket(wsUrl);
   } catch (e) {
     console.error("[FBKit] WS create error:", e.message);
@@ -92,32 +111,36 @@ async function connectWS() {
     console.log("[FBKit] Connected to Agent");
     clearTimeout(reconnectTimer);
     reconnectAttempt = 0;
+    wsConnectingSince = 0;
 
     // Announce ourselves with FB UID (from c_user cookie)
-    const fbUid = await getFbUid();
+    const fbUid = await getFbUid(true);
     const profileIdentity = await getProfileIdentity();
-    ws.send(JSON.stringify({
-      type: "extension_ready",
-      fb_uid: fbUid,
-      loggedIn: !!fbUid,
-      extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
-      profileId: profileIdentity.profileId,
-      profileName: profileIdentity.profileName,
-      url: "",
-    }));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "extension_ready",
+        fb_uid: fbUid,
+        loggedIn: !!fbUid,
+        extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
+        profileId: profileIdentity.profileId,
+        profileName: profileIdentity.profileName,
+        url: "",
+      }));
+    }
 
     // Start ping keepalive
     clearInterval(pingTimer);
     pingTimer = setInterval(async () => {
-      if (ws && ws.readyState === 1) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         const currentFbUid = await getFbUid();
+        const identity = await getProfileIdentity();
         ws.send(JSON.stringify({
           type: "ping",
           fb_uid: currentFbUid,
           loggedIn: !!currentFbUid,
           extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
-          profileId: profileIdentity.profileId,
-          profileName: profileIdentity.profileName,
+          profileId: identity.profileId,
+          profileName: identity.profileName,
         }));
       }
     }, PING_INTERVAL_MS);
@@ -137,10 +160,12 @@ async function connectWS() {
     // Dispatch command to content script
     if (data.id && data.method) {
       const result = await dispatchToContentScript(data);
-      ws.send(JSON.stringify({
-        id: data.id,
-        ...result,
-      }));
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          id: data.id,
+          ...result,
+        }));
+      }
     }
   };
 
@@ -148,6 +173,7 @@ async function connectWS() {
     console.log("[FBKit] Disconnected from Agent");
     clearInterval(pingTimer);
     ws = null;
+    wsConnectingSince = 0;
     scheduleReconnect();
   };
 
@@ -237,6 +263,8 @@ async function dispatchToContentScript(command) {
 // inactive extension behavior).
 
 chrome.alarms.create("telemetry", { periodInMinutes: 5 });
+// MV3 service workers sleep; wake + ensure agent WS at least every minute.
+chrome.alarms.create("ws-keepalive", { periodInMinutes: 1 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "telemetry") {
@@ -244,6 +272,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       lastActivity: Date.now(),
       sessionId: `fbkit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     });
+  }
+  if (alarm.name === "ws-keepalive" || alarm.name === "telemetry") {
+    connectWS(false);
   }
 });
 
@@ -276,8 +307,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
 let lastPageStateWireKey = "";
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === "reconnect_agent") {
+    connectWS(true);
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (message.type === "page_state") {
-    if (ws && ws.readyState === 1) {
+    // Content-script traffic wakes the SW — ensure WS is up before drop.
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connectWS(false);
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
       getFbUid().then((fbUid) => {
         const payload = {
           type: "page_state",

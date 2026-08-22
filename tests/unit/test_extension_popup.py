@@ -33,6 +33,13 @@ def test_popup_uses_local_api_key_only_for_local_agent_requests():
     assert "credential" not in source.lower()
 
 
+def test_popup_reconnects_agent_before_status_check():
+    source = _source()
+
+    assert 'action: "reconnect_agent"' in source
+    assert "chrome.runtime.sendMessage" in source
+
+
 def test_popup_checks_facebook_page_state_without_mutating_messages():
     source = _source()
 
