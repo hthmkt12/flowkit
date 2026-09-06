@@ -75,3 +75,22 @@ jobs:
       - name: Build
         working-directory: dashboard
         run: npm run build
+
+  extension:
+    name: Extension tests
+    runs-on: windows-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run extension tests
+        run: node --test extension/tests/capture.test.mjs
