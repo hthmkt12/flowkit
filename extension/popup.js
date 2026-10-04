@@ -20,6 +20,7 @@ async function checkStatus() {
   const agentEl = document.getElementById("agent-status");
   const fbEl = document.getElementById("fb-status");
   const taskEl = document.getElementById("task-count");
+  const safetyEl = document.getElementById("safety-mode");
   const errorEl = document.getElementById("error");
 
   errorEl.style.display = "none";
@@ -38,6 +39,16 @@ async function checkStatus() {
       agentEl.innerHTML = '<span class="dot green"></span>Connected';
     } else {
       agentEl.innerHTML = '<span class="dot yellow"></span>No Extension';
+    }
+
+    // Safety mode
+    if (safetyEl) {
+      const isLive = data.live_actions_enabled || data.live_guard?.enabled;
+      if (isLive) {
+        safetyEl.innerHTML = '<span class="dot yellow"></span>Live Mode (Armed)';
+      } else {
+        safetyEl.innerHTML = '<span class="dot green"></span>Dry-Run (100% Safe)';
+      }
     }
 
     // Session status
@@ -64,22 +75,32 @@ async function checkStatus() {
       active: true,
     });
 
+    const agentLoggedIn = data.extension?.sessions?.some((s) => s.logged_in && s.fb_uid);
+
     if (tabs.length > 0) {
       try {
         const fbState = await chrome.tabs.sendMessage(tabs[0].id, {
           method: "get_page_state",
           params: {},
         });
-        if (fbState?.data?.loggedIn) {
+        if (fbState?.data?.loggedIn || agentLoggedIn) {
           fbEl.innerHTML = '<span class="dot green"></span>Logged In';
         } else {
           fbEl.innerHTML = '<span class="dot red"></span>Not Logged In';
         }
       } catch {
-        fbEl.innerHTML = '<span class="dot yellow"></span>No Content Script';
+        if (agentLoggedIn) {
+          fbEl.innerHTML = '<span class="dot green"></span>Logged In';
+        } else {
+          fbEl.innerHTML = '<span class="dot yellow"></span>No Content Script';
+        }
       }
     } else {
-      fbEl.innerHTML = '<span class="dot yellow"></span>No FB Tab';
+      if (agentLoggedIn) {
+        fbEl.innerHTML = '<span class="dot green"></span>Logged In';
+      } else {
+        fbEl.innerHTML = '<span class="dot yellow"></span>No FB Tab';
+      }
     }
 
   } catch (e) {
@@ -113,4 +134,6 @@ document.getElementById("btn-dashboard").addEventListener("click", () => {
     /* ignore */
   }
   await checkStatus();
+  // Auto-refresh popup status while open
+  setInterval(checkStatus, 3000);
 })();

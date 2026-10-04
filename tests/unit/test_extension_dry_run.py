@@ -240,3 +240,57 @@ def test_mutating_handlers_check_extension_live_guard_before_dangerous_dom_actio
         assert guard_index < first_dangerous_index, (
             f"{handler_name} checks extension live guard after a dangerous DOM action"
         )
+
+
+def test_post_with_media_normalizes_media_paths_and_has_localized_selectors():
+    source = _source()
+    body = _handler_body(source, "handlePostWithMedia")
+    assert "params.mediaPaths || (params.mediaPath ? [params.mediaPath] : [])" in body
+    assert "Tạo bài viết" in body
+    assert "Bạn đang nghĩ gì?" in body
+    assert "Ảnh/video" in body
+
+
+def test_preflight_supports_media_post_types():
+    source = _source()
+    assert "POST_IMAGE" in source
+    assert "POST_VIDEO" in source
+    assert "POST_WITH_MEDIA" in source
+
+
+def test_background_and_content_keepalive_port():
+    source = _source()
+    background = (EXTENSION_SCRIPT.parent / "background.js").read_text(encoding="utf-8")
+    assert 'fbkit_keepalive' in source
+    assert 'fbkit_keepalive' in background
+
+
+def test_background_tracks_cookie_and_tab_changes():
+    background = (EXTENSION_SCRIPT.parent / "background.js").read_text(encoding="utf-8")
+    assert "chrome.tabs.onActivated.addListener" in background
+    assert "chrome.tabs.onUpdated.addListener" in background
+    assert 'changeInfo.cookie?.name === "c_user"' in background
+
+
+def test_group_and_page_post_handlers_support_destination_navigation():
+    source = _source()
+    text_handler = _handler_body(source, "handlePostText")
+    media_handler = _handler_body(source, "handlePostWithMedia")
+
+    for handler in [text_handler, media_handler]:
+        assert 'targetType === "GROUP"' in handler
+        assert 'targetType === "PAGE"' in handler
+        assert "params.groupUrl" in handler
+        assert "params.pageUrl" in handler
+        assert "Write something..." in handler
+        assert "Viết gì đó..." in handler
+        assert "Tạo bài viết công khai" in handler
+
+
+def test_preflight_supports_group_composer_selectors():
+    source = _source()
+    assert "Write something..." in source
+    assert "Viết gì đó..." in source
+    assert "Tạo bài viết công khai" in source
+
+

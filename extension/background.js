@@ -74,9 +74,24 @@ async function getFbUid(force = false) {
 }
 
 if (chrome.cookies?.onChanged) {
-  chrome.cookies.onChanged.addListener((changeInfo) => {
+  chrome.cookies.onChanged.addListener(async (changeInfo) => {
     if (changeInfo.cookie?.name === "c_user") {
       cachedFbUid = { value: null, at: 0 };
+      const currentFbUid = await getFbUid(true);
+      const identity = await getProfileIdentity();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "extension_ready",
+          fb_uid: currentFbUid,
+          loggedIn: Boolean(currentFbUid),
+          extensionLiveActionsEnabled: EXTENSION_LIVE_ACTIONS_ENABLED,
+          profileId: identity.profileId,
+          profileName: identity.profileName,
+          url: "",
+        }));
+      } else {
+        connectWS(false);
+      }
     }
   });
 }
@@ -287,7 +302,11 @@ async function dispatchToContentScript(command) {
         func: () => {
           const loggedIn = !!document.querySelector('[aria-label="Your profile"]')
             || !!document.querySelector('[aria-label="Account"]')
-            || !!document.querySelector('[data-pagelet="ProfileBrowser"]');
+            || !!document.querySelector('[aria-label="Tài khoản"]')
+            || !!document.querySelector('[aria-label="Trang cá nhân của bạn"]')
+            || !!document.querySelector('[aria-label="Menu tài khoản"]')
+            || !!document.querySelector('[data-pagelet="ProfileBrowser"]')
+            || !!document.querySelector('[role="banner"] [role="button"] img[alt]');
           return {
             loggedIn,
             url: window.location.href,
@@ -430,6 +449,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
 });
+
+// ─── Content Script Keepalive Port ──────────────────────────
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === "fbkit_keepalive") {
+    // Content script on Facebook tab is active — ensure agent WS is healthy
+    connectWS(false);
+  }
+});
+
+// ─── Facebook Tab Navigation / Switch Listeners ─────────────
+if (chrome.tabs?.onActivated) {
+  chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    try {
+      const tab = await chrome.tabs.get(activeInfo.tabId);
+      if (tab?.url && /facebook\.com/i.test(tab.url)) {
+        connectWS(false);
+      }
+    } catch {
+      /* tab might have closed */
+    }
+  });
+}
+
+if (chrome.tabs?.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === "complete" && tab.url && /facebook\.com/i.test(tab.url)) {
+      connectWS(false);
+    }
+  });
+}
 
 // Reconnect on service worker activation
 connectWS();

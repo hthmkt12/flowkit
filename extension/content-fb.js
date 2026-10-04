@@ -203,17 +203,31 @@ async function handlePostText(params) {
   try {
     // Navigate to target if needed
     if (targetType === "GROUP" && targetId) {
-      window.location.href = `https://www.facebook.com/groups/${targetId}`;
+      window.location.href = targetId.startsWith("http") ? targetId : `https://www.facebook.com/groups/${targetId}`;
+      await sleep(3000);
+    } else if (targetType === "GROUP" && params.groupUrl) {
+      window.location.href = params.groupUrl;
       await sleep(3000);
     } else if (targetType === "PAGE" && targetId) {
-      window.location.href = `https://www.facebook.com/${targetId}`;
+      window.location.href = targetId.startsWith("http") ? targetId : `https://www.facebook.com/${targetId}`;
+      await sleep(3000);
+    } else if (targetType === "PAGE" && params.pageUrl) {
+      window.location.href = params.pageUrl;
       await sleep(3000);
     }
 
-    // Click the composer ("What's on your mind?")
+    // Click the composer ("What's on your mind?" / "Write something...")
     const composerSelectors = resolveSelectors([
       '[aria-label="Create a post"]',
       '[aria-label="What\'s on your mind?"]',
+      '[aria-label="Tạo bài viết"]',
+      '[aria-label="Bạn đang nghĩ gì?"]',
+      '[aria-label="Write something..."]',
+      '[aria-label="Viết gì đó..."]',
+      '[aria-label="Create a public post…"]',
+      '[aria-label="Create a public post"]',
+      '[aria-label="Tạo bài viết công khai…"]',
+      '[aria-label="Tạo bài viết công khai"]',
       '[name="xhpc_message_text"]',
       'div[role="button"][tabindex="0"]',
     ], stSelectors);
@@ -239,6 +253,11 @@ async function handlePostText(params) {
     const textAreaSelectors = resolveSelectors([
       'div[contenteditable="true"][role="textbox"]',
       'div[aria-label="What\'s on your mind?"][contenteditable="true"]',
+      'div[aria-label="Bạn đang nghĩ gì?"][contenteditable="true"]',
+      'div[aria-label="Write something..."][contenteditable="true"]',
+      'div[aria-label="Viết gì đó..."][contenteditable="true"]',
+      'div[aria-label="Create a public post…"][contenteditable="true"]',
+      'div[aria-label="Tạo bài viết công khai…"][contenteditable="true"]',
       'div[data-lexical-editor="true"]',
     ], stSelectors);
 
@@ -776,7 +795,9 @@ function getPageSafetyState() {
     }
   }
 
-  const loggedIn = !!document.querySelector('[aria-label="Your profile"], [aria-label="Account"], [data-pagelet="ProfileBrowser"]');
+  const loggedIn = !!document.querySelector(
+    '[aria-label="Your profile"], [aria-label="Account"], [aria-label="Tài khoản"], [aria-label="Trang cá nhân của bạn"], [aria-label="Menu tài khoản"], [data-pagelet="ProfileBrowser"], [role="navigation"] img[alt*="avatar"], [role="banner"] [role="button"] img[alt]'
+  );
   return { loggedIn, checkpointWarning, loginWarning, url: href };
 }
 
@@ -785,12 +806,36 @@ function getPageSafetyState() {
  */
 function handleLivePreflight(params = {}) {
   const safety = getPageSafetyState();
+  const commonComposerSelectors = [
+    '[aria-label="Create a post"]',
+    "[aria-label=\"What's on your mind?\"]",
+    '[aria-label="Tạo bài viết"]',
+    "[aria-label=\"Bạn đang nghĩ gì?\"]",
+    '[aria-label="Write something..."]',
+    '[aria-label="Viết gì đó..."]',
+    '[aria-label="Create a public post…"]',
+    '[aria-label="Create a public post"]',
+    '[aria-label="Tạo bài viết công khai…"]',
+    '[aria-label="Tạo bài viết công khai"]',
+    '[name="xhpc_message_text"]',
+    'div[role="button"][tabindex="0"]',
+  ];
   const selectorMap = {
-    POST_TEXT: [
-      '[aria-label="Create a post"]',
-      "[aria-label=\"What's on your mind?\"]",
-      '[name="xhpc_message_text"]',
-      'div[role="button"][tabindex="0"]',
+    POST_TEXT: commonComposerSelectors,
+    POST_IMAGE: [
+      ...commonComposerSelectors,
+      'div[aria-label="Photo/video"]',
+      'div[aria-label="Ảnh/video"]',
+    ],
+    POST_VIDEO: [
+      ...commonComposerSelectors,
+      'div[aria-label="Photo/video"]',
+      'div[aria-label="Ảnh/video"]',
+    ],
+    POST_WITH_MEDIA: [
+      ...commonComposerSelectors,
+      'div[aria-label="Photo/video"]',
+      'div[aria-label="Ảnh/video"]',
     ],
   };
   const selectors = selectorMap[String(params.taskType || "").toUpperCase()];
@@ -866,7 +911,8 @@ async function handleGetPostMetrics(params) {
  * Supports TIMELINE, GROUP, PAGE, and REEL targets.
  */
 async function handlePostWithMedia(params) {
-  const { content, mediaPaths, targetType, targetId } = params;
+  const mediaPaths = params.mediaPaths || (params.mediaPath ? [params.mediaPath] : []);
+  const { content, targetType, targetId } = params;
 
   if (isDryRun(params)) {
     return dryRunResult("post_with_media", {
@@ -1008,10 +1054,16 @@ async function handlePostWithMedia(params) {
     // ─── TIMELINE / GROUP / PAGE Upload Flow ──────────────────
     // Navigate to target if needed
     if (targetType === "GROUP" && targetId) {
-      window.location.href = `https://www.facebook.com/groups/${targetId}`;
+      window.location.href = targetId.startsWith("http") ? targetId : `https://www.facebook.com/groups/${targetId}`;
+      await sleep(3000);
+    } else if (targetType === "GROUP" && params.groupUrl) {
+      window.location.href = params.groupUrl;
       await sleep(3000);
     } else if (targetType === "PAGE" && targetId) {
-      window.location.href = `https://www.facebook.com/${targetId}`;
+      window.location.href = targetId.startsWith("http") ? targetId : `https://www.facebook.com/${targetId}`;
+      await sleep(3000);
+    } else if (targetType === "PAGE" && params.pageUrl) {
+      window.location.href = params.pageUrl;
       await sleep(3000);
     }
 
@@ -1019,6 +1071,15 @@ async function handlePostWithMedia(params) {
     const composer = await waitForElement([
       '[aria-label="Create a post"]',
       '[aria-label="What\'s on your mind?"]',
+      '[aria-label="Tạo bài viết"]',
+      '[aria-label="Bạn đang nghĩ gì?"]',
+      '[aria-label="Write something..."]',
+      '[aria-label="Viết gì đó..."]',
+      '[aria-label="Create a public post…"]',
+      '[aria-label="Create a public post"]',
+      '[aria-label="Tạo bài viết công khai…"]',
+      '[aria-label="Tạo bài viết công khai"]',
+      '[name="xhpc_message_text"]',
       'div[role="button"][tabindex="0"]',
     ], 10000);
 
@@ -1042,6 +1103,8 @@ async function handlePostWithMedia(params) {
       'div[aria-label="Photo/video"]',
       'div[aria-label="Photo/Video"]',
       'div[aria-label="Ảnh/video"]',
+      'div[aria-label="Ảnh/Video"]',
+      'div[aria-label="Thêm ảnh/video"]',
       'text=Photo/video',
       'text=Ảnh/video',
     ], 5000);
@@ -1084,6 +1147,8 @@ async function handlePostWithMedia(params) {
       const textArea = await waitForElement([
         'div[contenteditable="true"][role="textbox"]',
         'div[aria-label="What\'s on your mind?"][contenteditable="true"]',
+        'div[aria-label="Bạn đang nghĩ gì?"][contenteditable="true"]',
+        'div[aria-label="Tạo bài viết công khai..."][contenteditable="true"]',
         'div[data-lexical-editor="true"]',
       ], 8000);
 
@@ -1803,6 +1868,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       subtree: true,
     });
   }
+})();
+
+// ─── SW Keepalive Bridge ─────────────────────────────────────
+// Long-lived Port keeps Chrome MV3 Service Worker awake while Facebook is open
+(function setupKeepAlive() {
+  let keepAlivePort = null;
+  function connect() {
+    try {
+      keepAlivePort = chrome.runtime.connect({ name: "fbkit_keepalive" });
+      keepAlivePort.onDisconnect.addListener(() => {
+        keepAlivePort = null;
+        setTimeout(connect, 1000);
+      });
+    } catch {
+      setTimeout(connect, 5000);
+    }
+  }
+  connect();
 })();
 
 console.log("[FBKit] Content script loaded on:", window.location.href);
