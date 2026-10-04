@@ -70,6 +70,39 @@ def truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+DEFAULT_LOCAL_MAX_POSTS_PER_DAY = 5
+DEFAULT_LOCAL_MIN_SPACING_SECONDS = 1800  # 30 minutes
+
+
+@dataclass(frozen=True)
+class LocalRateLimitResult:
+    """Read-only result of local invariant rate limit evaluation."""
+
+    allowed: bool
+    reason: str | None = None
+
+
+def evaluate_local_rate_limits(
+    *,
+    posts_today_count: int,
+    seconds_since_last_post: float | None = None,
+    max_posts_per_day: int = DEFAULT_LOCAL_MAX_POSTS_PER_DAY,
+    min_spacing_seconds: int = DEFAULT_LOCAL_MIN_SPACING_SECONDS,
+) -> LocalRateLimitResult:
+    """Enforce local invariant rate limit ceiling (max 5 posts/day/channel, 30m spacing)."""
+    if posts_today_count >= max_posts_per_day:
+        return LocalRateLimitResult(
+            allowed=False,
+            reason=f"local_rate_limit_exceeded_daily_{posts_today_count}_of_{max_posts_per_day}",
+        )
+    if seconds_since_last_post is not None and seconds_since_last_post < min_spacing_seconds:
+        return LocalRateLimitResult(
+            allowed=False,
+            reason=f"local_rate_limit_min_spacing_{int(seconds_since_last_post)}s_less_than_{min_spacing_seconds}s",
+        )
+    return LocalRateLimitResult(allowed=True)
+
+
 @dataclass(frozen=True)
 class LocalLiveReadiness:
     """Read-only S4 readiness result for one local live-dispatch snapshot.
@@ -187,6 +220,10 @@ def enforce_payload(task_type: str, payload: dict | None) -> dict:
 
     if safe_payload.get("targetType") == "GROUP":
         group_url = safe_payload.get("groupUrl")
+        target_id = safe_payload.get("targetId")
+        if not target_id and group_url and isinstance(group_url, str) and group_url.strip():
+            clean_url = group_url.rstrip("/").split("?")[0]
+            safe_payload["targetId"] = clean_url.split("/")[-1]
         if not group_url or not isinstance(group_url, str) or not group_url.strip():
             target_id = safe_payload.get("targetId")
             if target_id:
@@ -195,10 +232,17 @@ def enforce_payload(task_type: str, payload: dict | None) -> dict:
                 raise ValueError("group targetType requires a non-empty groupUrl or targetId")
     elif safe_payload.get("targetType") == "PAGE":
         target_id = safe_payload.get("targetId")
-        if not isinstance(target_id, str) or not target_id.strip():
+        page_url = safe_payload.get("pageUrl")
+        if not target_id and page_url and isinstance(page_url, str) and page_url.strip():
+            clean_url = page_url.rstrip("/").split("?")[0]
+            target_id = clean_url.split("/")[-1]
+            safe_payload["targetId"] = target_id
+        if not target_id or not isinstance(target_id, str) or not target_id.strip():
             raise ValueError("page targetType requires a non-empty targetId")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", target_id.strip()):
             raise ValueError("page targetType targetId must be a Facebook page id or slug")
+        if not page_url:
+            safe_payload["pageUrl"] = f"https://www.facebook.com/{target_id}"
     elif safe_payload.get("targetType") == "POST":
         post_url = safe_payload.get("postUrl")
         if not post_url or not isinstance(post_url, str) or not post_url.strip():
@@ -207,6 +251,16 @@ def enforce_payload(task_type: str, payload: dict | None) -> dict:
         profile_url = safe_payload.get("profileUrl")
         if not profile_url or not isinstance(profile_url, str) or not profile_url.strip():
             raise ValueError("lead targetType requires a non-empty profileUrl")
+
+    valid_until_raw = safe_payload.get("validUntil") or safe_payload.get("valid_until")
+    if valid_until_raw:
+        parsed_valid = _parse_utc(valid_until_raw)
+        if parsed_valid is not None and parsed_valid < datetime.now(timezone.utc):
+            safe_payload["dryRun"] = True
+            safe_payload["approved"] = False
+            safe_payload["safetyReason"] = "missed_window_expired"
+            safe_payload["error"] = "MISSED_WINDOW"
+            return safe_payload
 
     if not config.LIVE_ACTIONS_ENABLED:
         safe_payload["dryRun"] = True

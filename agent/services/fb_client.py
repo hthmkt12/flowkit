@@ -342,26 +342,40 @@ class FBClient:
     async def post_text(self, content: str, target_type: str = "TIMELINE",
                         target_id: str = None, fb_uid: str = None,
                         strategy: dict | None = None,
-                        dry_run: bool = False) -> dict:
-        return await self._send("post_text", self._with_strategy({
+                        dry_run: bool = False,
+                        group_url: str | None = None,
+                        page_url: str | None = None) -> dict:
+        params = {
             "content": content,
             "targetType": target_type,
             "targetId": target_id,
             "dryRun": dry_run,
-        }, strategy), fb_uid=fb_uid, timeout=60)
+        }
+        if group_url:
+            params["groupUrl"] = group_url
+        if page_url:
+            params["pageUrl"] = page_url
+        return await self._send("post_text", self._with_strategy(params, strategy), fb_uid=fb_uid, timeout=60)
 
     async def post_with_media(self, content: str, media_paths: list[str],
                                 target_type: str = "TIMELINE",
                                 target_id: str = None, fb_uid: str = None,
                                 strategy: dict | None = None,
-                                dry_run: bool = False) -> dict:
-        return await self._send("post_with_media", self._with_strategy({
+                                dry_run: bool = False,
+                                group_url: str | None = None,
+                                page_url: str | None = None) -> dict:
+        params = {
             "content": content,
             "mediaPaths": media_paths,
             "targetType": target_type,
             "targetId": target_id,
             "dryRun": dry_run,
-        }, strategy), fb_uid=fb_uid, timeout=300)
+        }
+        if group_url:
+            params["groupUrl"] = group_url
+        if page_url:
+            params["pageUrl"] = page_url
+        return await self._send("post_with_media", self._with_strategy(params, strategy), fb_uid=fb_uid, timeout=300)
 
     async def send_message(self, recipient_name: str, content: str,
                              recipient_uid: str = None,

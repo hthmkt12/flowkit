@@ -455,8 +455,10 @@ class WorkerController:
                     "current_url": preflight_data.get("url", (session_snapshot or {}).get("current_url")),
                 } if session_snapshot else None
                 expected_target_url = None
-                if payload.get("targetType") == "PAGE" and payload.get("targetId"):
-                    expected_target_url = f"https://www.facebook.com/{payload['targetId']}"
+                if payload.get("targetType") == "GROUP":
+                    expected_target_url = payload.get("groupUrl") or (f"https://www.facebook.com/groups/{payload['targetId']}" if payload.get("targetId") else None)
+                elif payload.get("targetType") == "PAGE" and (payload.get("targetId") or payload.get("pageUrl")):
+                    expected_target_url = payload.get("pageUrl") or f"https://www.facebook.com/{payload['targetId']}"
                 abort = evaluate_live_abort_conditions(
                     account_id=task.get("account_id") or "",
                     expected_fb_uid=fb_uid,
@@ -700,6 +702,8 @@ class WorkerController:
                 fb_uid=fb_uid,
                 strategy=strategy_hints,
                 dry_run=dry_run,
+                group_url=payload.get("groupUrl"),
+                page_url=payload.get("pageUrl"),
             )
 
         elif task_type == "POST_LINK":
@@ -714,23 +718,33 @@ class WorkerController:
                 fb_uid=fb_uid,
                 strategy=strategy_hints,
                 dry_run=dry_run,
+                group_url=payload.get("groupUrl"),
+                page_url=payload.get("pageUrl"),
             )
 
         elif task_type in ("POST_IMAGE", "POST_VIDEO"):
+            media_paths = payload.get("mediaPaths") or ([payload["mediaPath"]] if payload.get("mediaPath") else [])
+            if not media_paths and not dry_run:
+                raise ValueError(f"{task_type} requires at least one media path in mediaPaths or mediaPath")
             return await client.post_with_media(
                 content=payload.get("content", ""),
-                media_paths=payload.get("mediaPaths", []),
+                media_paths=media_paths,
                 target_type=payload.get("targetType", "TIMELINE"),
                 target_id=payload.get("targetId"),
                 fb_uid=fb_uid,
                 strategy=strategy_hints,
                 dry_run=dry_run,
+                group_url=payload.get("groupUrl"),
+                page_url=payload.get("pageUrl"),
             )
 
         elif task_type == "POST_STORY":
+            media_paths = payload.get("mediaPaths") or ([payload["mediaPath"]] if payload.get("mediaPath") else [])
+            if not media_paths and not dry_run:
+                raise ValueError(f"{task_type} requires at least one media path in mediaPaths or mediaPath")
             return await client.post_with_media(
                 content=payload.get("content", ""),
-                media_paths=payload.get("mediaPaths", []),
+                media_paths=media_paths,
                 target_type="STORY",
                 target_id=payload.get("targetId"),
                 fb_uid=fb_uid,
@@ -739,9 +753,12 @@ class WorkerController:
             )
 
         elif task_type == "POST_REEL":
+            media_paths = payload.get("mediaPaths") or ([payload["mediaPath"]] if payload.get("mediaPath") else [])
+            if not media_paths and not dry_run:
+                raise ValueError(f"{task_type} requires at least one media path in mediaPaths or mediaPath")
             return await client.post_with_media(
                 content=payload.get("content", ""),
-                media_paths=payload.get("mediaPaths", []),
+                media_paths=media_paths,
                 target_type="REEL",
                 target_id=payload.get("targetId"),
                 fb_uid=fb_uid,

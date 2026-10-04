@@ -1178,7 +1178,7 @@ def _enable_live_guard_flags(monkeypatch):
     monkeypatch.setattr("agent.config.WS_AUTH_ENABLED", True, raising=False)
 
 
-def test_local_live_guard_requires_all_flags_enabled(live_guard_snapshot, monkeypatch):
+def test_local_live_requires_all_flags_enabled(live_guard_snapshot, monkeypatch):
     for flag, reason in (
         ("LIVE_ACTIONS_ENABLED", "live_actions_disabled"),
         ("API_AUTH_ENABLED", "api_auth_disabled"),
@@ -1189,6 +1189,9 @@ def test_local_live_guard_requires_all_flags_enabled(live_guard_snapshot, monkey
         result = _evaluate_live_guard(live_guard_snapshot)
         assert result.satisfied is False
         assert result.reasons == [reason]
+
+
+test_local_live_guard_requires_all_flags_enabled = test_local_live_requires_all_flags_enabled
 
 
 def test_local_live_requires_active_arm(live_guard_snapshot, monkeypatch):
@@ -1324,6 +1327,46 @@ def test_live_abort_passes_only_with_complete_safety_snapshot(live_abort_snapsho
     result = evaluate_live_abort_conditions(**live_abort_snapshot)
     assert result.abort is False
     assert result.reasons == []
+
+
+def test_local_rate_limits_enforces_daily_ceiling():
+    from agent.services.safety_gate import evaluate_local_rate_limits
+
+    # 4 posts today -> allowed
+    ok_result = evaluate_local_rate_limits(posts_today_count=4)
+    assert ok_result.allowed is True
+    assert ok_result.reason is None
+
+    # 5 posts today -> blocked
+    exceeded_result = evaluate_local_rate_limits(posts_today_count=5)
+    assert exceeded_result.allowed is False
+    assert "local_rate_limit_exceeded_daily" in exceeded_result.reason
+
+
+def test_local_rate_limits_enforces_minimum_spacing():
+    from agent.services.safety_gate import evaluate_local_rate_limits
+
+    # 10 minutes (600s) since last post -> blocked by 1800s minimum spacing
+    spacing_blocked = evaluate_local_rate_limits(posts_today_count=2, seconds_since_last_post=600)
+    assert spacing_blocked.allowed is False
+    assert "local_rate_limit_min_spacing" in spacing_blocked.reason
+
+    # 35 minutes (2100s) since last post -> allowed
+    spacing_ok = evaluate_local_rate_limits(posts_today_count=2, seconds_since_last_post=2100)
+    assert spacing_ok.allowed is True
+
+
+def test_enforce_payload_expires_overdue_valid_until():
+    from agent.services.safety_gate import enforce_payload
+
+    # Valid until in the past -> forced to dry run with MISSED_WINDOW
+    past_iso = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    payload = enforce_payload("POST_TEXT", {"content": "Overdue post", "validUntil": past_iso})
+    assert payload["dryRun"] is True
+    assert payload["safetyReason"] == "missed_window_expired"
+    assert payload["error"] == "MISSED_WINDOW"
+    assert payload.get("approved") is False
+
 
 
 def test_live_abort_fails_closed_when_session_is_missing(live_abort_snapshot):
